@@ -1,0 +1,97 @@
+---
+# =============================================================================
+# workers/worker_register_db_listener/tasks/run.yml
+# Registers the Oracle DB service with the running listener.
+#
+# How Oracle service registration works:
+#   After DBCA the PMON process auto-registers with the local listener,
+#   but this can take up to 60 seconds. This worker:
+#     1. Forces immediate registration via ALTER SYSTEM REGISTER
+#     2. Sets LOCAL_LISTENER so the DB always knows which listener to use
+#     3. Reloads the listener to pick up the service entry
+#     4. Verifies the service appears in lsnrctl status output
+#
+# Works for both standalone (DB_HOME) and Grid listeners.
+# Idempotent — ALTER SYSTEM REGISTER and lsnrctl reload are safe to re-run.
+# =============================================================================
+
+- name: "worker_register_db_listener | run"
+  block:
+
+    # ── Determine correct listener home based on listener_source ─────────────
+    - name: "worker_register_db_listener | set listener home"
+      ansible.builtin.set_fact:
+        _lsnr_home: "{{ grid_home if (listener_source == 'GRID' and grid_configured_true | bool) else oracle_home }}"
+
+    # ── Set LOCAL_LISTENER parameter in the database ──────────────────────────
+    - name: "worker_register_db_listener | set LOCAL_LISTENER and force registration"
+      ansible.builtin.shell: |
+        export ORACLE_SID={{ oracle_sid }}
+        export ORACLE_HOME={{ oracle_home }}
+        export PATH={{ oracle_home }}/bin:$PATH
+        sqlplus -S / as sysdba << 'EOF'
+        ALTER SYSTEM SET LOCAL_LISTENER=
+          '(ADDRESS=(PROTOCOL=TCP)(HOST={{ ansible_fqdn | default(ansible_hostname) }})(PORT={{ listener_port }}))'
+          SCOPE=BOTH;
+        ALTER SYSTEM REGISTER;
+        EXIT;
+        EOF
+      register: _register_result
+      changed_when: true
+      become: true
+      become_user: "{{ oracle_user }}"
+
+    # ── Give PMON a moment to complete registration ───────────────────────────
+    - name: "worker_register_db_listener | wait 10s for PMON to register service"
+      ansible.builtin.pause:
+        seconds: 10
+
+    # ── Reload the listener ───────────────────────────────────────────────────
+    - name: "worker_register_db_listener | reload listener {{ listener_name }}"
+      ansible.builtin.shell: |
+        export ORACLE_HOME={{ _lsnr_home }}
+        export PATH={{ _lsnr_home }}/bin:$PATH
+        lsnrctl reload {{ listener_name }}
+      register: _reload_result
+      changed_when: _reload_result.rc == 0
+      become: true
+      become_user: "{{ oracle_user }}"
+
+    # ── Verify service appears in listener status ─────────────────────────────
+    - name: "worker_register_db_listener | check service registered in listener"
+      ansible.builtin.shell: |
+        export ORACLE_HOME={{ _lsnr_home }}
+        export PATH={{ _lsnr_home }}/bin:$PATH
+        lsnrctl status {{ listener_name }} | grep -i "{{ oracle_sid }}"
+      register: _svc_check
+      changed_when: false
+      become: true
+      become_user: "{{ oracle_user }}"
+      retries: 3
+      delay:   15
+      until:   _svc_check.rc == 0
+
+    - name: "worker_register_db_listener | assert service is registered"
+      ansible.builtin.assert:
+        that: _svc_check.rc == 0
+        fail_msg: >-
+          Service for {{ oracle_sid }} not visible in lsnrctl status {{ listener_name }}
+          after registration attempt.
+          Check LOCAL_LISTENER parameter and that the listener is running.
+        quiet: true
+
+    - name: "worker_register_db_listener | set COMPLETED"
+      ansible.builtin.set_fact:
+        _worker_status:  "COMPLETED"
+        _worker_message: >-
+          DB service {{ oracle_sid }} registered with {{ listener_source }}
+          listener {{ listener_name }} on port {{ listener_port }}.
+        _worker_changed: true
+
+  rescue:
+
+    - name: "worker_register_db_listener | set FAILED"
+      ansible.builtin.set_fact:
+        _worker_status:  "FAILED"
+        _worker_message: "{{ ansible_failed_result.msg | default('Listener registration failed') | truncate(200) }}"
+        _worker_changed: false

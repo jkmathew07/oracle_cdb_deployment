@@ -1,13 +1,6 @@
 ---
 # =============================================================================
 # group_vars/all/workflow_map.yml
-#
-# Each workflow entry defines an ordered steps list.
-# Naming convention drives dispatch:
-#   gate_*  → orchestrator hands to gate_engine
-#   phase_* → orchestrator hands to phase_engine
-#
-# Adding a new workflow = add an entry here. No playbook changes needed.
 # =============================================================================
 
 workflow_map:
@@ -17,9 +10,10 @@ workflow_map:
     name: "Oracle CDB Deployment"
     description: >-
       Full silent-mode CDB creation. Detects Grid automatically.
-      Configures listener, runs DBCA, validates result.
+      Configures listener, runs DBCA, configures DB network, validates result.
     steps:
       - gate_input_validation
       - gate_environment_validation
       - gate_network_validation
       - phase_db_creation
+      - phase_db_network_config

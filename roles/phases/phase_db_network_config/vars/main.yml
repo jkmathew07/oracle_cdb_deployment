@@ -1,0 +1,22 @@
+---
+# =============================================================================
+# phases/phase_db_network_config/vars/main.yml
+# Runs AFTER phase_db_creation.
+# Registers the DB service with the listener, writes tnsnames.ora,
+# and verifies a sqlplus connection can be made via the listener.
+# =============================================================================
+
+phase:
+  id:          "phase_db_network_config"
+  name:        "DB Network Configuration"
+  description: "Registers DB service with listener, configures tnsnames.ora, validates listener connectivity."
+
+  workers:
+    - name: "Register DB Service with Listener"
+      role: "workers/worker_register_db_listener"
+
+    - name: "Configure tnsnames.ora"
+      role: "workers/worker_configure_tnsnames"
+
+    - name: "Validate DB Listener Connectivity"
+      role: "workers/worker_validate_db_connectivity"

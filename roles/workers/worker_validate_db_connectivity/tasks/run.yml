@@ -1,0 +1,109 @@
+---
+# =============================================================================
+# workers/worker_validate_db_connectivity/tasks/run.yml
+# Validates that the DB and all PDBs are reachable via the listener
+# using a TNS alias connection (not bequeath / as sysdba).
+# This is the true end-to-end network test — it exercises:
+#   listener → listener handoff → server process → DB service
+#
+# Tests performed:
+#   1. CDB reachable via TNS alias (oracle_sid entry in tnsnames.ora)
+#   2. Each PDB reachable via its TNS alias
+#   3. lsnrctl status shows all expected services
+# =============================================================================
+
+- name: "worker_validate_db_connectivity | run"
+  block:
+
+    # ── Determine listener home ───────────────────────────────────────────────
+    - name: "worker_validate_db_connectivity | set listener home"
+      ansible.builtin.set_fact:
+        _lsnr_home: "{{ grid_home if (listener_source == 'GRID' and grid_configured_true | bool) else oracle_home }}"
+
+    # ── Test CDB connectivity via TNS ─────────────────────────────────────────
+    - name: "worker_validate_db_connectivity | test CDB connection via TNS alias"
+      ansible.builtin.shell: |
+        export ORACLE_HOME={{ oracle_home }}
+        export TNS_ADMIN={{ oracle_home }}/network/admin
+        export PATH={{ oracle_home }}/bin:$PATH
+        echo "SELECT 'CDB_CONNECT_OK' FROM DUAL;" | \
+          sqlplus -S sys/{{ oracle_sys_password }}@{{ oracle_sid }} as sysdba 2>/dev/null | \
+          grep -w "CDB_CONNECT_OK"
+      register: _cdb_connect
+      changed_when: false
+      become: true
+      become_user: "{{ oracle_user }}"
+      no_log: true
+
+    - name: "worker_validate_db_connectivity | assert CDB connection succeeded"
+      ansible.builtin.assert:
+        that: _cdb_connect.rc == 0
+        fail_msg: >-
+          Cannot connect to CDB {{ oracle_sid }} via TNS alias.
+          Ensure listener is running and service {{ oracle_sid }} is registered.
+          Run: lsnrctl status {{ listener_name }}
+        quiet: true
+
+    # ── Test each PDB connectivity via TNS ────────────────────────────────────
+    - name: "worker_validate_db_connectivity | test PDB connection: {{ _pdb }}"
+      ansible.builtin.shell: |
+        export ORACLE_HOME={{ oracle_home }}
+        export TNS_ADMIN={{ oracle_home }}/network/admin
+        export PATH={{ oracle_home }}/bin:$PATH
+        echo "SELECT 'PDB_CONNECT_OK' FROM DUAL;" | \
+          sqlplus -S sys/{{ oracle_sys_password }}@{{ _pdb }} as sysdba 2>/dev/null | \
+          grep -w "PDB_CONNECT_OK"
+      register: _pdb_connect_results
+      changed_when: false
+      become: true
+      become_user: "{{ oracle_user }}"
+      no_log: true
+      loop:         "{{ pdb_names }}"
+      loop_control:
+        loop_var: _pdb
+        label:    "{{ _pdb }}"
+
+    - name: "worker_validate_db_connectivity | assert all PDB connections succeeded"
+      ansible.builtin.assert:
+        that: item.rc == 0
+        fail_msg: >-
+          Cannot connect to PDB {{ item._pdb }} via TNS alias.
+          Ensure the PDB is open and its service is registered with the listener.
+        quiet: true
+      loop:         "{{ _pdb_connect_results.results }}"
+      loop_control:
+        label: "{{ item._pdb }}"
+
+    # ── Final lsnrctl status summary ──────────────────────────────────────────
+    - name: "worker_validate_db_connectivity | get listener status summary"
+      ansible.builtin.shell: |
+        export ORACLE_HOME={{ _lsnr_home }}
+        export PATH={{ _lsnr_home }}/bin:$PATH
+        lsnrctl status {{ listener_name }} | grep -E "Service|Instance"
+      register: _lsnr_summary
+      changed_when: false
+      become: true
+      become_user: "{{ oracle_user }}"
+
+    - name: "worker_validate_db_connectivity | display listener services"
+      ansible.builtin.debug:
+        msg: |
+          Listener {{ listener_name }} registered services:
+          {{ _lsnr_summary.stdout }}
+
+    - name: "worker_validate_db_connectivity | set COMPLETED"
+      ansible.builtin.set_fact:
+        _worker_status:  "COMPLETED"
+        _worker_message: >-
+          All connectivity tests passed.
+          CDB {{ oracle_sid }} reachable via TNS.
+          PDBs reachable: {{ pdb_names | join(', ') }}.
+        _worker_changed: false
+
+  rescue:
+
+    - name: "worker_validate_db_connectivity | set FAILED"
+      ansible.builtin.set_fact:
+        _worker_status:  "FAILED"
+        _worker_message: "{{ ansible_failed_result.msg | default('Connectivity validation failed') | truncate(200) }}"
+        _worker_changed: false

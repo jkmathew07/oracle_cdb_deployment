@@ -1,0 +1,71 @@
+---
+# =============================================================================
+# workers/worker_register_db_listener/tasks/main.yml
+# WORKER TEMPLATE — identical structure across all worker roles.
+#
+# Pattern:  Initialize → Invoke (run.yml) → Update Dashboard
+#
+# CONTRACT — run.yml must set these facts before returning:
+#   _worker_status  : "COMPLETED" | "FAILED" | "SKIPPED"
+#   _worker_message : human-readable outcome
+#   _worker_changed : true | false
+# =============================================================================
+
+# ── 1. INITIALIZE ─────────────────────────────────────────────────────────────
+- name: "worker register db listener | INITIALIZE"
+  ansible.builtin.set_fact:
+    _worker_status:     "RUNNING"
+    _worker_message:    ""
+    _worker_changed:    false
+    _worker_started_at: "{{ ansible_date_time.iso8601 }}"
+  tags: [worker, always]
+
+- name: "worker register db listener | log start"
+  ansible.builtin.lineinfile:
+    path:   "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      worker_register_db_listener | INFO | worker_start | Register DB Service with Listener
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true
+  tags: [worker, logging]
+
+- name: "worker register db listener | display start"
+  ansible.builtin.debug:
+    msg: "[ WORKER ] Register DB Service with Listener — starting"
+  tags: [worker]
+
+# ── 2. INVOKE ─────────────────────────────────────────────────────────────────
+- name: "worker register db listener | INVOKE run.yml"
+  ansible.builtin.include_tasks: run.yml
+  tags: [worker]
+
+# ── 3. UPDATE DASHBOARD ───────────────────────────────────────────────────────
+- name: "worker register db listener | UPDATE DASHBOARD"
+  ansible.builtin.include_role:
+    name: dashboard
+    tasks_from: update_worker.yml
+  tags: [worker, dashboard]
+
+- name: "worker register db listener | log result"
+  ansible.builtin.lineinfile:
+    path: "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      worker_register_db_listener |
+      {{ 'INFO' if _worker_status in ['COMPLETED','SKIPPED'] else 'ERROR' }} |
+      worker_result | Register DB Service with Listener: {{ _worker_status }} — {{ _worker_message | truncate(150) }}
+      {{ '[changed]' if _worker_changed | default(false) else '' }}
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true
+  tags: [worker, logging]
+
+- name: "worker register db listener | display result"
+  ansible.builtin.debug:
+    msg: "[ WORKER ] Register DB Service with Listener: {{ _worker_status }} — {{ _worker_message }}"
+  tags: [worker]
+

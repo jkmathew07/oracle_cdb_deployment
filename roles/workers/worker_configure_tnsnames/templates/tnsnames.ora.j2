@@ -1,0 +1,37 @@
+# ==============================================================================
+# tnsnames.ora — managed by Ansible oracle_cdb_deployment
+# Generated : {{ ansible_date_time.iso8601 }}
+# Host      : {{ inventory_hostname }}
+# SID       : {{ oracle_sid }}
+# ==============================================================================
+
+# ── CDB connection entry ───────────────────────────────────────────────────────
+{{ oracle_sid }} =
+  (DESCRIPTION =
+    (ADDRESS =
+      (PROTOCOL = TCP)
+      (HOST = {{ ansible_fqdn | default(ansible_hostname) }})
+      (PORT = {{ listener_port }})
+    )
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = {{ oracle_sid }}.{{ oracle_domain | default(ansible_domain | default('localdomain')) }})
+    )
+  )
+
+# ── PDB connection entries ─────────────────────────────────────────────────────
+{% for pdb in pdb_names %}
+{{ pdb }} =
+  (DESCRIPTION =
+    (ADDRESS =
+      (PROTOCOL = TCP)
+      (HOST = {{ ansible_fqdn | default(ansible_hostname) }})
+      (PORT = {{ listener_port }})
+    )
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = {{ pdb }}.{{ oracle_domain | default(ansible_domain | default('localdomain')) }})
+    )
+  )
+
+{% endfor %}

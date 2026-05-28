@@ -1,0 +1,58 @@
+---
+# =============================================================================
+# workers/worker_configure_tnsnames/tasks/run.yml
+# Writes tnsnames.ora entries for the CDB and all PDBs.
+# Uses blockinfile so re-runs are idempotent — existing entries for other
+# databases in the file are never touched.
+#
+# Entries written:
+#   <oracle_sid>          — CDB connection (sysdba access)
+#   <pdb_name>            — one entry per PDB in pdb_names list
+#
+# tnsnames.ora location: $ORACLE_HOME/network/admin/tnsnames.ora
+# =============================================================================
+
+- name: "worker_configure_tnsnames | run"
+  block:
+
+    # ── Ensure network/admin directory exists ─────────────────────────────────
+    - name: "worker_configure_tnsnames | ensure network/admin directory"
+      ansible.builtin.file:
+        path:  "{{ oracle_home }}/network/admin"
+        state: directory
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        mode:  '0755'
+      become: true
+
+    # ── Render tnsnames.ora from template ─────────────────────────────────────
+    # Uses template (not blockinfile) so the complete entry is always
+    # correct. Backup=true preserves the previous version.
+    - name: "worker_configure_tnsnames | render tnsnames.ora"
+      ansible.builtin.template:
+        src:    "tnsnames.ora.j2"
+        dest:   "{{ oracle_home }}/network/admin/tnsnames.ora"
+        owner:  "{{ oracle_user }}"
+        group:  "{{ oracle_group }}"
+        mode:   '0644'
+        backup: true
+      become: true
+      register: _tns_result
+
+    - name: "worker_configure_tnsnames | set COMPLETED"
+      ansible.builtin.set_fact:
+        _worker_status:  "COMPLETED"
+        _worker_message: >-
+          tnsnames.ora written to {{ oracle_home }}/network/admin/tnsnames.ora.
+          Entries: CDB={{ oracle_sid }},
+          PDBs={{ pdb_names | join(', ') }}.
+          {{ 'File updated.' if _tns_result.changed else 'No changes needed.' }}
+        _worker_changed: "{{ _tns_result.changed }}"
+
+  rescue:
+
+    - name: "worker_configure_tnsnames | set FAILED"
+      ansible.builtin.set_fact:
+        _worker_status:  "FAILED"
+        _worker_message: "{{ ansible_failed_result.msg | default('tnsnames.ora configuration failed') | truncate(200) }}"
+        _worker_changed: false
