@@ -1,0 +1,159 @@
+---
+# =============================================================================
+# workers/worker_ensure_db_dirs/tasks/run.yml
+# Checks ownership of all four DB storage directories.
+# If any directory is not owned by oracle:oinstall, corrects it.
+# Runs BEFORE worker_generate_dbca_rsp so DBCA never encounters a
+# permission problem on its target locations.
+#
+# Directories checked:
+#   db_data_file_loc  — datafiles
+#   db_fra            — Fast Recovery Area
+#   db_arch_loc       — archivelog destination
+#   db_redo_loc       — redo log location
+# =============================================================================
+
+- name: "worker_ensure_db_dirs | run"
+  block:
+
+    # ── Stat all four directories ─────────────────────────────────────────────
+    - name: "worker_ensure_db_dirs | stat db_data_file_loc"
+      ansible.builtin.stat:
+        path: "{{ db_data_file_loc }}"
+      register: _dir_stat_data
+      become: true
+
+    - name: "worker_ensure_db_dirs | stat db_fra"
+      ansible.builtin.stat:
+        path: "{{ db_fra }}"
+      register: _dir_stat_fra
+      become: true
+
+    - name: "worker_ensure_db_dirs | stat db_arch_loc"
+      ansible.builtin.stat:
+        path: "{{ db_arch_loc }}"
+      register: _dir_stat_arch
+      become: true
+
+    - name: "worker_ensure_db_dirs | stat db_redo_loc"
+      ansible.builtin.stat:
+        path: "{{ db_redo_loc }}"
+      register: _dir_stat_redo
+      become: true
+
+    # ── Build list of directories that need ownership correction ──────────────
+    - name: "worker_ensure_db_dirs | identify directories with wrong ownership"
+      ansible.builtin.set_fact:
+        _dirs_to_fix: >-
+          {{
+            ([] if (_dir_stat_data.stat.pw_name == oracle_user and
+                    _dir_stat_data.stat.gr_name == oracle_group)
+                else [{'label': 'db_data_file_loc', 'path': db_data_file_loc,
+                       'owner': _dir_stat_data.stat.pw_name,
+                       'group': _dir_stat_data.stat.gr_name}])
+            +
+            ([] if (_dir_stat_fra.stat.pw_name == oracle_user and
+                    _dir_stat_fra.stat.gr_name == oracle_group)
+                else [{'label': 'db_fra', 'path': db_fra,
+                       'owner': _dir_stat_fra.stat.pw_name,
+                       'group': _dir_stat_fra.stat.gr_name}])
+            +
+            ([] if (_dir_stat_arch.stat.pw_name == oracle_user and
+                    _dir_stat_arch.stat.gr_name == oracle_group)
+                else [{'label': 'db_arch_loc', 'path': db_arch_loc,
+                       'owner': _dir_stat_arch.stat.pw_name,
+                       'group': _dir_stat_arch.stat.gr_name}])
+            +
+            ([] if (_dir_stat_redo.stat.pw_name == oracle_user and
+                    _dir_stat_redo.stat.gr_name == oracle_group)
+                else [{'label': 'db_redo_loc', 'path': db_redo_loc,
+                       'owner': _dir_stat_redo.stat.pw_name,
+                       'group': _dir_stat_redo.stat.gr_name}])
+          }}
+
+    # ── Report what will be changed (only logged when corrections needed) ─────
+    - name: "worker_ensure_db_dirs | report directories requiring ownership fix"
+      ansible.builtin.debug:
+        msg: >-
+          Ownership correction needed for {{ _dirs_to_fix | length }} director(y/ies):
+          {% for d in _dirs_to_fix %}
+            {{ d.label }} ({{ d.path }}): current={{ d.owner }}:{{ d.group }}
+            → target={{ oracle_user }}:{{ oracle_group }}
+          {% endfor %}
+      when: _dirs_to_fix | length > 0
+
+    # ── Apply chown to every directory that needs it ──────────────────────────
+    - name: "worker_ensure_db_dirs | fix ownership: {{ _fix_dir.label }} ({{ _fix_dir.path }})"
+      ansible.builtin.file:
+        path:  "{{ _fix_dir.path }}"
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        state: directory
+      become: true
+      loop:         "{{ _dirs_to_fix }}"
+      loop_control:
+        loop_var: _fix_dir
+        label:    "{{ _fix_dir.label }}"
+      register: _chown_results
+
+    # ── Verify ownership is correct after any changes ─────────────────────────
+    - name: "worker_ensure_db_dirs | verify db_data_file_loc ownership"
+      ansible.builtin.stat:
+        path: "{{ db_data_file_loc }}"
+      register: _verify_data
+      become: true
+
+    - name: "worker_ensure_db_dirs | verify db_fra ownership"
+      ansible.builtin.stat:
+        path: "{{ db_fra }}"
+      register: _verify_fra
+      become: true
+
+    - name: "worker_ensure_db_dirs | verify db_arch_loc ownership"
+      ansible.builtin.stat:
+        path: "{{ db_arch_loc }}"
+      register: _verify_arch
+      become: true
+
+    - name: "worker_ensure_db_dirs | verify db_redo_loc ownership"
+      ansible.builtin.stat:
+        path: "{{ db_redo_loc }}"
+      register: _verify_redo
+      become: true
+
+    - name: "worker_ensure_db_dirs | assert all directories now owned by {{ oracle_user }}:{{ oracle_group }}"
+      ansible.builtin.assert:
+        that:
+          - _verify_data.stat.pw_name == oracle_user
+          - _verify_data.stat.gr_name == oracle_group
+          - _verify_fra.stat.pw_name  == oracle_user
+          - _verify_fra.stat.gr_name  == oracle_group
+          - _verify_arch.stat.pw_name == oracle_user
+          - _verify_arch.stat.gr_name == oracle_group
+          - _verify_redo.stat.pw_name == oracle_user
+          - _verify_redo.stat.gr_name == oracle_group
+        fail_msg: >-
+          One or more storage directories could not be set to
+          {{ oracle_user }}:{{ oracle_group }}. Check sudo permissions
+          for the ansible user on this host.
+        quiet: true
+
+    - name: "worker_ensure_db_dirs | set COMPLETED"
+      ansible.builtin.set_fact:
+        _worker_status: "COMPLETED"
+        _worker_message: >-
+          {% if _dirs_to_fix | length == 0 %}
+          All storage directories already owned by {{ oracle_user }}:{{ oracle_group }}. No changes needed.
+          {% else %}
+          Ownership corrected on {{ _dirs_to_fix | length }} director(y/ies):
+          {{ _dirs_to_fix | map(attribute='label') | list | join(', ') }}.
+          {% endif %}
+        _worker_changed: "{{ _dirs_to_fix | length > 0 }}"
+
+  rescue:
+
+    - name: "worker_ensure_db_dirs | set FAILED"
+      ansible.builtin.set_fact:
+        _worker_status:  "FAILED"
+        _worker_message: "{{ ansible_failed_result.msg | default('Directory ownership check failed') | truncate(200) }}"
+        _worker_changed: false
