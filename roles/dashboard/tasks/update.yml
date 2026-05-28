@@ -22,7 +22,7 @@
                     else ('⏭️ ' if s.status == 'SKIPPED'
                     else ('⚠️ ' if s.status == 'WARNING'
                     else '❌')) %}
-      {{ "%2d" | format(s.step_number | int) }}. {{ icon }} {{ s.step_display | default(s.step_name) | ljust(38) }} [{{ s.status }}]
+      {{ "%2d" | format(s.step_number | int) }}. {{ icon }} {{ s.step_display | default(s.step_name) | center(38) }} [{{ s.status }}]
       {% endfor %}
       ──────────────────────────────────────────────────────────────────────
       Progress: {{ _dashboard_steps | length }}/{{ _dashboard_wf_steps | length }} steps
