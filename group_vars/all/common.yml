@@ -19,16 +19,16 @@ oracle_domain: "{{ ansible_domain | default('localdomain') }}"
 
 # ── Storage defaults (overridden per-host in inventory) ───────────────────────
 # These are fallbacks only — always set explicit paths per host.
-db_data_file_loc: "/u02/oradata"
-db_fra:           "/u03/fast_recovery_area"
-db_arch_loc:      "/u04/archivelog"
-db_redo_loc:      "/u05/redo"
+db_data_file_loc: "/ora_data"
+db_fra:           "/ora_fra"
+db_arch_loc:      "/ora_arch"
+db_redo_loc:      "/ora_redo"
 db_fra_size_mb:   10240            # FRA size in MB (default 10 GB)
 
 # ── Memory — SGA + PGA (overridden per-host) ──────────────────────────────────
 # memory_target_mb MUST be 0 when sga_target_mb + pga_target_mb are used.
 # DBCA uses MEMORY_TARGET only when sga_target_mb is 0.
-sga_target_mb:    2048
+sga_target_mb:    4096
 pga_target_mb:    1024
 memory_target_mb: 0                # 0 = use SGA/PGA instead of AMM
 
@@ -51,7 +51,7 @@ listener_port: 1521
 character_set: "AL32UTF8"
 
 # ── Grid detection runtime flags (set by validate_grid_home) ─────────────────
-grid_home_base:       "/u01/app/19.0.0/grid"
+grid_home_base:       "/u01/app/26.1.0/grid"
 grid_configured_true: false
 
 # ── Listener runtime flags (set by validate_*_listener gates) ────────────────
