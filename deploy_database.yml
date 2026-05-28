@@ -1,16 +1,18 @@
 ---
 # =============================================================================
-# playbooks/deploy_database.yml
-# Entry point — delegates everything to the orchestrator.
+# deploy_database.yml
+# Entry point — run from the project root:
 #
-# Usage:
-#   ansible-playbook playbooks/deploy_database.yml \
-#     -e "workflow_id=1" \
+#   cd /project/github/oracle_cdb_deployment
+#   ansible-playbook deploy_database.yml \
 #     --vault-password-file ~/.vault_pass
+#
+# ansible.cfg in this directory sets inventory and roles_path automatically.
+# workflow_id is defined per-host in inventory/hosts.yml.
 # =============================================================================
 
 - name: "Oracle CDB Deployment"
-  hosts: database_servers
+  hosts: oracle_nodes
   gather_facts: true
   any_errors_fatal: true
 
