@@ -2,82 +2,65 @@
 # =============================================================================
 # validations/validate_db_file_systems/tasks/run.yml
 # Checks all four storage locations exist and are directories.
-# Locations checked:
-#   db_data_file_loc  — datafiles
-#   db_fra            — Fast Recovery Area
-#   db_arch_loc       — archivelog destination
-#   db_redo_loc       — redo log location
+# Each path is stat-ed individually with a fixed register name —
+# Ansible does not support templated register values.
 # =============================================================================
 
 - name: "validate_db_file_systems | run"
   block:
 
-    # ── Build a list of all paths to check ────────────────────────────────────
-    - name: "validate_db_file_systems | build storage path list"
-      ansible.builtin.set_fact:
-        _storage_paths:
-          - label: "db_data_file_loc"
-            path:  "{{ db_data_file_loc }}"
-          - label: "db_fra"
-            path:  "{{ db_fra }}"
-          - label: "db_arch_loc"
-            path:  "{{ db_arch_loc }}"
-          - label: "db_redo_loc"
-            path:  "{{ db_redo_loc }}"
-
-    # ── Stat every path ───────────────────────────────────────────────────────
-    - name: "validate_db_file_systems | stat {{ _sp.label }}: {{ _sp.path }}"
+    # ── Stat each location with a fixed register name ─────────────────────────
+    - name: "validate_db_file_systems | stat db_data_file_loc"
       ansible.builtin.stat:
-        path: "{{ _sp.path }}"
-      register: "_fs_stat_{{ _sp.label }}"
+        path: "{{ db_data_file_loc }}"
+      register: _stat_data
       become: true
-      loop:         "{{ _storage_paths }}"
-      loop_control:
-        loop_var: _sp
-        label:    "{{ _sp.label }}"
 
-    # ── Assert db_data_file_loc ───────────────────────────────────────────────
-    - name: "validate_db_file_systems | assert db_data_file_loc exists"
-      ansible.builtin.assert:
-        that:
-          - _fs_stat_db_data_file_loc.stat.exists
-          - _fs_stat_db_data_file_loc.stat.isdir
-        fail_msg: >-
-          db_data_file_loc={{ db_data_file_loc }} does not exist or is not a
-          directory. Create the mount point before running this playbook.
-        quiet: true
+    - name: "validate_db_file_systems | stat db_fra"
+      ansible.builtin.stat:
+        path: "{{ db_fra }}"
+      register: _stat_fra
+      become: true
 
-    # ── Assert db_fra ─────────────────────────────────────────────────────────
-    - name: "validate_db_file_systems | assert db_fra exists"
-      ansible.builtin.assert:
-        that:
-          - _fs_stat_db_fra.stat.exists
-          - _fs_stat_db_fra.stat.isdir
-        fail_msg: >-
-          db_fra={{ db_fra }} does not exist or is not a directory.
-          Create the mount point before running this playbook.
-        quiet: true
+    - name: "validate_db_file_systems | stat db_arch_loc"
+      ansible.builtin.stat:
+        path: "{{ db_arch_loc }}"
+      register: _stat_arch
+      become: true
 
-    # ── Assert db_arch_loc ────────────────────────────────────────────────────
-    - name: "validate_db_file_systems | assert db_arch_loc exists"
-      ansible.builtin.assert:
-        that:
-          - _fs_stat_db_arch_loc.stat.exists
-          - _fs_stat_db_arch_loc.stat.isdir
-        fail_msg: >-
-          db_arch_loc={{ db_arch_loc }} does not exist or is not a directory.
-          Create the mount point before running this playbook.
-        quiet: true
+    - name: "validate_db_file_systems | stat db_redo_loc"
+      ansible.builtin.stat:
+        path: "{{ db_redo_loc }}"
+      register: _stat_redo
+      become: true
 
-    # ── Assert db_redo_loc ────────────────────────────────────────────────────
-    - name: "validate_db_file_systems | assert db_redo_loc exists"
+    # ── Collect failures so all missing paths are reported at once ────────────
+    - name: "validate_db_file_systems | collect missing paths"
+      ansible.builtin.set_fact:
+        _fs_failures: >-
+          {{
+            ([] if (_stat_data.stat.exists and _stat_data.stat.isdir)
+                else ['db_data_file_loc=' + db_data_file_loc + ' — does not exist or is not a directory'])
+            +
+            ([] if (_stat_fra.stat.exists and _stat_fra.stat.isdir)
+                else ['db_fra=' + db_fra + ' — does not exist or is not a directory'])
+            +
+            ([] if (_stat_arch.stat.exists and _stat_arch.stat.isdir)
+                else ['db_arch_loc=' + db_arch_loc + ' — does not exist or is not a directory'])
+            +
+            ([] if (_stat_redo.stat.exists and _stat_redo.stat.isdir)
+                else ['db_redo_loc=' + db_redo_loc + ' — does not exist or is not a directory'])
+          }}
+
+    - name: "validate_db_file_systems | assert all storage locations exist"
       ansible.builtin.assert:
-        that:
-          - _fs_stat_db_redo_loc.stat.exists
-          - _fs_stat_db_redo_loc.stat.isdir
-        fail_msg: >-
-          db_redo_loc={{ db_redo_loc }} does not exist or is not a directory.
-          Create the mount point before running this playbook.
+        that: _fs_failures | length == 0
+        fail_msg: |
+          One or more storage locations are missing:
+          {% for f in _fs_failures %}
+            ✗  {{ f }}
+          {% endfor %}
+          Create all mount points before running this playbook.
         quiet: true
 
     - name: "validate_db_file_systems | set PASSED"
@@ -86,7 +69,7 @@
           name:    "validate_db_file_systems"
           status:  "PASSED"
           message: >-
-            All storage locations verified:
+            All storage locations verified —
             data={{ db_data_file_loc }},
             fra={{ db_fra }},
             arch={{ db_arch_loc }},
