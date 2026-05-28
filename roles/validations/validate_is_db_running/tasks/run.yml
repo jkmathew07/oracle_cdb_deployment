@@ -1,0 +1,44 @@
+---
+# =============================================================================
+# validations/validate_is_db_running/tasks/run.yml
+# Idempotency guard — confirms the target SID is NOT already running.
+# Uses block/rescue so _val_status is ALWAYS set regardless of shell errors.
+# =============================================================================
+
+- name: "validate_is_db_running | run"
+  block:
+
+    - name: "validate_is_db_running | check for running pmon process"
+      ansible.builtin.shell: |
+        ps -ef | grep "ora_pmon_{{ oracle_sid }}$" | grep -v grep
+      register: _pmon_check
+      failed_when: false
+      changed_when: false
+      become: true
+
+    - name: "validate_is_db_running | assert SID is NOT already running"
+      ansible.builtin.assert:
+        that:
+          - _pmon_check.rc != 0
+        fail_msg: >-
+          Database with SID '{{ oracle_sid }}' is already running
+          (ora_pmon_{{ oracle_sid }} process detected).
+          This playbook will not overwrite a running database.
+          Shut it down first or choose a different oracle_sid.
+        quiet: true
+
+    - name: "validate_is_db_running | set PASSED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_is_db_running"
+          status:  "PASSED"
+          message: "No running instance found for SID '{{ oracle_sid }}'."
+
+  rescue:
+
+    - name: "validate_is_db_running | set FAILED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_is_db_running"
+          status:  "FAILED"
+          message: "{{ ansible_failed_result.msg | default('SID conflict check failed') | truncate(200) }}"

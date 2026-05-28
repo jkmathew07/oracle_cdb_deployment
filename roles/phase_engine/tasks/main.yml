@@ -1,0 +1,9 @@
+---
+# =============================================================================
+# phase_engine/tasks/main.yml
+# Thin dispatcher — receives current_phase, delegates to phases/<current_phase>.
+# =============================================================================
+
+- name: "phase_engine | dispatch phase: {{ current_phase }}"
+  ansible.builtin.include_role:
+    name: "phases/{{ current_phase }}"

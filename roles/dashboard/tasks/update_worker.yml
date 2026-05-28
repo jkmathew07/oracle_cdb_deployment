@@ -1,0 +1,11 @@
+---
+# dashboard/tasks/update_worker.yml — called after each worker role.
+
+- name: "dashboard | worker status: {{ _worker_item.name | default('unknown') }}"
+  ansible.builtin.debug:
+    msg: >-
+      {{ '✅' if _worker_status in ['COMPLETED','SKIPPED'] else '❌' }}
+      [WORKER] {{ _worker_item.name | default('') }}:
+      {{ _worker_status }} — {{ _worker_message | default('') | truncate(100) }}
+      {{ '(changed)' if _worker_changed | default(false) else '' }}
+  tags: [dashboard]

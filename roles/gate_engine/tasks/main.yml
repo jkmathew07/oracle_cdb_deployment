@@ -1,0 +1,95 @@
+---
+# =============================================================================
+# gate_engine/tasks/main.yml
+# Iterates selected_workflow_steps, dispatching each to generic_gate
+# (gate_* steps) or phase_engine (phase_* steps).
+# Enforces prereq chain. Reports to dashboard after every step.
+# =============================================================================
+
+- name: "gate_engine | init"
+  ansible.builtin.set_fact:
+    _ge_started_at: "{{ ansible_date_time.epoch }}"
+    _ge_status:     "RUNNING"
+
+- name: "gate_engine | log workflow start"
+  ansible.builtin.lineinfile:
+    path:   "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      gate_engine | INFO | workflow_start |
+      workflow="{{ selected_workflow_name }}" steps={{ selected_workflow_steps | length }}
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true
+
+- name: "gate_engine | main block"
+  block:
+
+    - name: "gate_engine | execute step: {{ _step }}"
+      ansible.builtin.include_tasks: dispatch_step.yml
+      loop:         "{{ selected_workflow_steps }}"
+      loop_control:
+        loop_var:  _step
+        index_var: _step_idx
+        label:     "{{ _step }}"
+
+    - name: "gate_engine | mark SUCCESS"
+      ansible.builtin.set_fact:
+        _ge_status:   "SUCCESS"
+        _ge_duration: "{{ ansible_date_time.epoch | int - _ge_started_at | int }}"
+
+    - name: "gate_engine | display SUCCESS"
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+             ✅  WORKFLOW COMPLETE: {{ selected_workflow_name }}
+             Duration : {{ _ge_duration }}s
+             Steps    : {{ selected_workflow_steps | length }} / {{ selected_workflow_steps | length }}
+          ╚══════════════════════════════════════════════════════════════════════╝
+
+  rescue:
+
+    - name: "gate_engine | RESCUE — capture failure"
+      ansible.builtin.set_fact:
+        _ge_status:       "FAILED"
+        _ge_failed_step:  "{{ _step | default('unknown') }}"
+        _ge_error:        "{{ ansible_failed_result.msg | default('no message') | truncate(300) }}"
+        _ge_duration:     "{{ ansible_date_time.epoch | int - _ge_started_at | int }}"
+
+    - name: "gate_engine | RESCUE — log failure"
+      ansible.builtin.lineinfile:
+        path: "{{ log_file }}"
+        line: >-
+          {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+          gate_engine | ERROR | workflow_failed |
+          step="{{ _ge_failed_step }}" error="{{ _ge_error }}"
+        create: true
+        mode:   '0640'
+      become: true
+      ignore_errors: true
+
+    - name: "gate_engine | RESCUE — halt"
+      ansible.builtin.fail:
+        msg: |
+          ════════════════════════════════════════════════════════════════════
+          WORKFLOW FAILED: {{ selected_workflow_name }}
+          Failed step : {{ _ge_failed_step }}
+          Error       : {{ _ge_error }}
+          Log         : {{ log_file }}
+          ════════════════════════════════════════════════════════════════════
+
+  always:
+
+    - name: "gate_engine | ALWAYS — final log"
+      ansible.builtin.lineinfile:
+        path: "{{ log_file }}"
+        line: >-
+          {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+          gate_engine | INFO | workflow_end |
+          status={{ _ge_status | default('UNKNOWN') }}
+          duration={{ ansible_date_time.epoch | int - _ge_started_at | int }}s
+        create: true
+        mode:   '0640'
+      become: true
+      ignore_errors: true

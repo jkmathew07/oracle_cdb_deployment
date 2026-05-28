@@ -1,0 +1,50 @@
+---
+# =============================================================================
+# validations/validate_grid_listener/tasks/run.yml
+# Checks whether the Grid listener is already running.
+# Sets listener_creation_required and listener_source flags.
+# WARNING (not FAILED) when listener is absent — worker_configure_listener
+# will create it.
+# =============================================================================
+
+- name: "validate_grid_listener | run"
+  block:
+
+    - name: "validate_grid_listener | check Grid listener status"
+      ansible.builtin.command: "{{ grid_home }}/bin/lsnrctl status {{ listener_name }}"
+      register: _grid_lsnr_check
+      failed_when: false
+      changed_when: false
+      become: true
+      become_user: "{{ oracle_user }}"
+
+    - name: "validate_grid_listener | listener IS running — set flags"
+      ansible.builtin.set_fact:
+        listener_creation_required: false
+        listener_source: "GRID"
+        _val_status:
+          name:    "validate_grid_listener"
+          status:  "PASSED"
+          message: "Grid listener {{ listener_name }} is already running. No creation needed."
+      when: _grid_lsnr_check.rc == 0
+
+    - name: "validate_grid_listener | listener NOT running — set flags"
+      ansible.builtin.set_fact:
+        listener_creation_required: true
+        listener_source: "GRID"
+        _val_status:
+          name:    "validate_grid_listener"
+          status:  "WARNING"
+          message: >-
+            Grid listener {{ listener_name }} is not running.
+            worker_configure_listener will create it.
+      when: _grid_lsnr_check.rc != 0
+
+  rescue:
+
+    - name: "validate_grid_listener | set FAILED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_grid_listener"
+          status:  "FAILED"
+          message: "{{ ansible_failed_result.msg | default('Grid listener check failed') | truncate(200) }}"

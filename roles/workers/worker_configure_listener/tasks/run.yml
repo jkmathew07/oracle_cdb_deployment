@@ -1,0 +1,47 @@
+---
+# =============================================================================
+# workers/worker_configure_listener/tasks/run.yml
+# Idempotent listener configuration.
+# Reads listener_creation_required (set by validate_*_listener):
+#   false → listener already running; SKIPPED
+#   true  → create listener based on listener_source (GRID or DB_HOME)
+# =============================================================================
+
+- name: "worker_configure_listener | run"
+  block:
+
+    - name: "worker_configure_listener | SKIP if listener already running"
+      ansible.builtin.set_fact:
+        _worker_status:  "SKIPPED"
+        _worker_message: "Listener {{ listener_name }} already running (listener_creation_required=false)."
+        _worker_changed: false
+      when: not listener_creation_required | bool
+
+    - name: "worker_configure_listener | configure Grid listener"
+      ansible.builtin.include_tasks: configure_grid_listener.yml
+      when:
+        - listener_creation_required | bool
+        - listener_source == 'GRID'
+
+    - name: "worker_configure_listener | configure DB home listener"
+      ansible.builtin.include_tasks: configure_db_listener.yml
+      when:
+        - listener_creation_required | bool
+        - listener_source == 'DB_HOME'
+
+    - name: "worker_configure_listener | set COMPLETED"
+      ansible.builtin.set_fact:
+        _worker_status:  "COMPLETED"
+        _worker_message: >-
+          {{ listener_source }} listener {{ listener_name }} created and started
+          on port {{ listener_port }}.
+        _worker_changed: true
+      when: listener_creation_required | bool
+
+  rescue:
+
+    - name: "worker_configure_listener | set FAILED"
+      ansible.builtin.set_fact:
+        _worker_status:  "FAILED"
+        _worker_message: "{{ ansible_failed_result.msg | default('Listener configuration failed') | truncate(200) }}"
+        _worker_changed: false

@@ -1,0 +1,32 @@
+---
+# =============================================================================
+# playbooks/deploy_database.yml
+# Entry point — delegates everything to the orchestrator.
+#
+# Usage:
+#   ansible-playbook playbooks/deploy_database.yml \
+#     -e "workflow_id=1" \
+#     --vault-password-file ~/.vault_pass
+# =============================================================================
+
+- name: "Oracle CDB Deployment"
+  hosts: database_servers
+  gather_facts: true
+  any_errors_fatal: true
+
+  pre_tasks:
+    - name: "pre | assert Ansible >= 2.14"
+      ansible.builtin.assert:
+        that: ansible_version.full is version('2.14', '>=')
+        fail_msg: "Ansible >= 2.14 required. Found: {{ ansible_version.full }}"
+        quiet: true
+      tags: [always]
+
+    - name: "pre | refresh date/time facts"
+      ansible.builtin.setup:
+        filter: ansible_date_time
+      tags: [always]
+
+  roles:
+    - role: orchestrator
+      tags: [always]

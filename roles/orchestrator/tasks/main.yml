@@ -1,0 +1,92 @@
+---
+# =============================================================================
+# orchestrator/tasks/main.yml
+# Resolves workflow_id → step list, initialises dashboard, hands off to
+# gate_engine which iterates every step.
+#
+# This role performs ZERO system changes.
+# =============================================================================
+
+# ── Banner ────────────────────────────────────────────────────────────────────
+- name: "orchestrator | startup banner"
+  ansible.builtin.debug:
+    msg: |
+      ╔══════════════════════════════════════════════════════════════════════╗
+         🚀  ORACLE CDB DEPLOYMENT — ORCHESTRATOR
+         Host    : {{ inventory_hostname }}
+         User    : {{ lookup('env','USER') }}
+         Started : {{ ansible_date_time.iso8601 }}
+      ╚══════════════════════════════════════════════════════════════════════╝
+  run_once: true
+  tags: [always]
+
+# ── Assert workflow_id supplied ───────────────────────────────────────────────
+- name: "orchestrator | assert workflow_id is defined"
+  ansible.builtin.assert:
+    that:
+      - workflow_id is defined
+      - workflow_id | int > 0
+    fail_msg: >-
+      workflow_id is required. Pass with -e "workflow_id=<N>".
+      Available IDs: {{ workflow_map | map(attribute='id') | list | join(', ') }}.
+    quiet: true
+  tags: [always]
+
+# ── Resolve workflow ──────────────────────────────────────────────────────────
+- name: "orchestrator | resolve workflow from workflow_map"
+  ansible.builtin.set_fact:
+    _resolved_workflow: >-
+      {{ workflow_map
+         | selectattr('id', 'equalto', workflow_id | int)
+         | list | first }}
+  tags: [always]
+
+- name: "orchestrator | assert workflow_id exists"
+  ansible.builtin.assert:
+    that:
+      - _resolved_workflow is defined
+      - _resolved_workflow.name is defined
+    fail_msg: >-
+      workflow_id={{ workflow_id }} not found in workflow_map.
+      Valid IDs: {{ workflow_map | map(attribute='id') | list | join(', ') }}.
+    quiet: true
+  tags: [always]
+
+# ── Expose runtime facts ──────────────────────────────────────────────────────
+- name: "orchestrator | set workflow runtime facts"
+  ansible.builtin.set_fact:
+    selected_workflow_id:    "{{ workflow_id | int }}"
+    selected_workflow_name:  "{{ _resolved_workflow.name }}"
+    selected_workflow_steps: "{{ _resolved_workflow.steps }}"
+  tags: [always]
+
+- name: "orchestrator | display resolved workflow"
+  ansible.builtin.debug:
+    msg: |
+      Workflow resolved:
+        ID    : {{ selected_workflow_id }}
+        Name  : {{ selected_workflow_name }}
+        Steps : {{ selected_workflow_steps | join(' → ') }}
+  run_once: true
+
+# ── Ensure log directory ──────────────────────────────────────────────────────
+- name: "orchestrator | ensure log directory"
+  ansible.builtin.file:
+    path:  "{{ log_dir }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode:  '0755'
+  become: true
+  tags: [always]
+
+# ── Init dashboard ────────────────────────────────────────────────────────────
+- name: "orchestrator | initialise dashboard"
+  ansible.builtin.include_role:
+    name: dashboard
+  tags: [dashboard]
+
+# ── Hand off to gate_engine ───────────────────────────────────────────────────
+- name: "orchestrator | invoke gate_engine"
+  ansible.builtin.include_role:
+    name: gate_engine

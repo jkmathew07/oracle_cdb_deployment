@@ -1,0 +1,36 @@
+---
+# workers/worker_configure_listener/tasks/configure_grid_listener.yml
+# Idempotent Grid listener setup via srvctl.
+# Checks for existing registration before running srvctl add.
+
+- name: "configure_grid_listener | check if listener already registered in clusterware"
+  ansible.builtin.shell: |
+    {{ grid_home }}/bin/srvctl config listener -listener {{ listener_name }} 2>/dev/null || true
+  register: _grid_lsnr_config
+  changed_when: false
+  become: true
+  become_user: "{{ oracle_user }}"
+
+- name: "configure_grid_listener | srvctl add listener (only if not registered)"
+  ansible.builtin.shell: |
+    {{ grid_home }}/bin/srvctl add listener \
+      -listener {{ listener_name }} \
+      -oraclehome {{ grid_home }} \
+      -port {{ listener_port }}
+  become: true
+  become_user: "{{ oracle_user }}"
+  when: _grid_lsnr_config.stdout | length == 0
+
+- name: "configure_grid_listener | check if listener process already running"
+  ansible.builtin.shell: |
+    {{ grid_home }}/bin/srvctl status listener -listener {{ listener_name }} 2>/dev/null | grep -i "running" || true
+  register: _grid_lsnr_status
+  changed_when: false
+  become: true
+  become_user: "{{ oracle_user }}"
+
+- name: "configure_grid_listener | srvctl start listener (only if not running)"
+  ansible.builtin.command: "{{ grid_home }}/bin/srvctl start listener -listener {{ listener_name }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  when: _grid_lsnr_status.stdout | length == 0

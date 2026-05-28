@@ -1,0 +1,8 @@
+---
+# =============================================================================
+# group_vars/all/vault.yml
+# Encrypt with: ansible-vault encrypt group_vars/all/vault.yml
+# =============================================================================
+oracle_sys_password:    "CHANGE_ME_Sys1!"
+oracle_system_password: "CHANGE_ME_Sys1!"
+oracle_pdb_password:    "CHANGE_ME_Pdb1!"

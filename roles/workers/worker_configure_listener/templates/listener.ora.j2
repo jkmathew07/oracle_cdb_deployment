@@ -1,0 +1,15 @@
+# ============================================================
+# listener.ora — managed by Ansible oracle_cdb_deployment
+# Generated: {{ ansible_date_time.iso8601 }}
+# ============================================================
+
+{{ listener_name }} =
+  (DESCRIPTION_LIST =
+    (DESCRIPTION =
+      (ADDRESS = (PROTOCOL = TCP)
+                 (HOST = {{ ansible_fqdn | default(ansible_hostname) }})
+                 (PORT = {{ listener_port }}))
+    )
+  )
+
+LOGGING_{{ listener_name }} = ON

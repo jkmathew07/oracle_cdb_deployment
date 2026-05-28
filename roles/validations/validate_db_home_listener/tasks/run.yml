@@ -1,0 +1,49 @@
+---
+# =============================================================================
+# validations/validate_db_home_listener/tasks/run.yml
+# Checks whether the standalone DB home listener is already running.
+# Sets listener_creation_required and listener_source flags.
+# WARNING (not FAILED) when listener is absent.
+# =============================================================================
+
+- name: "validate_db_home_listener | run"
+  block:
+
+    - name: "validate_db_home_listener | check DB home listener status"
+      ansible.builtin.command: "{{ oracle_home }}/bin/lsnrctl status {{ listener_name }}"
+      register: _db_lsnr_check
+      failed_when: false
+      changed_when: false
+      become: true
+      become_user: "{{ oracle_user }}"
+
+    - name: "validate_db_home_listener | listener IS running — set flags"
+      ansible.builtin.set_fact:
+        listener_creation_required: false
+        listener_source: "DB_HOME"
+        _val_status:
+          name:    "validate_db_home_listener"
+          status:  "PASSED"
+          message: "DB home listener {{ listener_name }} is already running. No creation needed."
+      when: _db_lsnr_check.rc == 0
+
+    - name: "validate_db_home_listener | listener NOT running — set flags"
+      ansible.builtin.set_fact:
+        listener_creation_required: true
+        listener_source: "DB_HOME"
+        _val_status:
+          name:    "validate_db_home_listener"
+          status:  "WARNING"
+          message: >-
+            DB home listener {{ listener_name }} is not running.
+            worker_configure_listener will create it.
+      when: _db_lsnr_check.rc != 0
+
+  rescue:
+
+    - name: "validate_db_home_listener | set FAILED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_db_home_listener"
+          status:  "FAILED"
+          message: "{{ ansible_failed_result.msg | default('DB home listener check failed') | truncate(200) }}"

@@ -1,0 +1,37 @@
+---
+# =============================================================================
+# phases/phase_db_creation/tasks/run_worker.yml
+# Dispatches one worker role, reads _worker_status immediately after return,
+# logs result, and collects any failure into _phase_failures.
+# =============================================================================
+
+- name: "run_worker | execute: {{ _worker_item.name }}"
+  ansible.builtin.include_role:
+    name: "{{ _worker_item.role }}"
+
+- name: "run_worker | log result: {{ _worker_item.name }}"
+  ansible.builtin.lineinfile:
+    path: "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      {{ phase.id }} |
+      {{ 'INFO' if _worker_status in ['COMPLETED','SKIPPED'] else 'ERROR' }} |
+      worker_result | {{ _worker_item.name }}: {{ _worker_status }}
+      — {{ _worker_message | default('') | truncate(120) }}
+      {{ '[changed]' if _worker_changed | default(false) else '' }}
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true
+
+- name: "run_worker | update dashboard: {{ _worker_item.name }}"
+  ansible.builtin.include_role:
+    name: dashboard
+    tasks_from: update_worker.yml
+
+- name: "run_worker | collect failure: {{ _worker_item.name }}"
+  ansible.builtin.set_fact:
+    _phase_failures: >-
+      {{ _phase_failures
+         + [_worker_item.name + ': ' + (_worker_message | default('no message'))] }}
+  when: _worker_status not in ['COMPLETED', 'SKIPPED']

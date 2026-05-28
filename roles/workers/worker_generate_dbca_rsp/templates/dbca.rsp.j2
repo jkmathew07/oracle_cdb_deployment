@@ -1,0 +1,56 @@
+# ==============================================================================
+# DBCA silent-mode response file
+# Managed by Ansible — oracle_cdb_deployment
+# Generated : {{ ansible_date_time.iso8601 }}
+# Host      : {{ inventory_hostname }}
+# SID       : {{ oracle_sid }}
+#
+# THIS FILE CONTAINS SENSITIVE CREDENTIALS.
+# It is automatically deleted after DBCA exits (success or failure).
+# ==============================================================================
+
+# ── Database identity ──────────────────────────────────────────────────────────
+gdbName={{ db_name }}.{{ oracle_domain | default(ansible_domain | default('localdomain')) }}
+sid={{ oracle_sid }}
+databaseConfigType=SI
+
+# ── Container database and PDBs ───────────────────────────────────────────────
+# DBCA creates only the first PDB listed in pdb_names via the response file.
+# Any additional PDBs are created by worker_execute_dbca using sqlplus
+# after the CDB is open.
+createAsContainerDatabase=true
+numberOfPDBs=1
+pdbName={{ pdb_names | first }}
+pdbAdminPassword={{ oracle_pdb_password }}
+
+# ── Template and character sets ───────────────────────────────────────────────
+templateName=General_Purpose.dbc
+characterSet={{ character_set }}
+nationalCharacterSet=AL16UTF16
+
+# ── Credentials ───────────────────────────────────────────────────────────────
+sysPassword={{ oracle_sys_password }}
+systemPassword={{ oracle_system_password }}
+
+# ── Memory model ──────────────────────────────────────────────────────────────
+{% if sga_target_mb | int > 0 and pga_target_mb | int > 0 %}
+memoryMgmtType=custom_sga
+{% else %}
+memoryMgmtType=auto_sga
+totalMemory={{ memory_target_mb }}
+{% endif %}
+
+# ── Storage locations ─────────────────────────────────────────────────────────
+storageType=FS
+datafileDestination={{ db_data_file_loc }}
+recoveryAreaDestination={{ db_fra }}
+recoveryAreaSize={{ db_fra_size_mb | default(10240) }}
+
+# ── Init parameters ───────────────────────────────────────────────────────────
+# db_create_online_log_dest_1 places redo logs at db_redo_loc.
+# log_archive_dest_1 places archivelogs at db_arch_loc.
+{% if sga_target_mb | int > 0 and pga_target_mb | int > 0 %}
+initParams=sga_target={{ sga_target_mb }}m,pga_aggregate_target={{ pga_target_mb }}m,memory_target=0,db_create_online_log_dest_1={{ db_redo_loc }},log_archive_dest_1='LOCATION={{ db_arch_loc }}'
+{% else %}
+initParams=db_create_online_log_dest_1={{ db_redo_loc }},log_archive_dest_1='LOCATION={{ db_arch_loc }}'
+{% endif %}

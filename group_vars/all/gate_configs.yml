@@ -1,0 +1,62 @@
+---
+# =============================================================================
+# group_vars/all/gate_configs.yml
+#
+# Single source of truth for gate definitions.
+# generic_gate resolves its config via:
+#   gate_configs[current_gate_name]
+#
+# No include_vars path hacks. This file is loaded automatically as a
+# group_var and is always in scope at play runtime.
+#
+# Adding a new gate = add an entry here + add the gate name to workflow_map.
+# The gate_engine and generic_gate roles need zero changes.
+# =============================================================================
+
+gate_configs:
+
+  # ── Gate 1: Input validation ─────────────────────────────────────────────
+  gate_input_validation:
+    id:          "gate_input_validation"
+    name:        "Input Validation"
+    description: "Verifies all mandatory variables are defined before any host checks."
+    prereqs:     []
+    validations:
+      - name:    "validate_deployment_mode"
+        role:    "validations/validate_deployment_mode"
+
+  # ── Gate 2: Environment validation ──────────────────────────────────────
+  gate_environment_validation:
+    id:          "gate_environment_validation"
+    name:        "Environment Validation"
+    description: "Validates host resources and confirms the target SID is not already running."
+    prereqs:
+      - gate_input_validation
+    validations:
+      - name:    "validate_server_configuration"
+        role:    "validations/validate_server_configuration"
+      - name:    "validate_db_file_systems"
+        role:    "validations/validate_db_file_systems"
+      - name:    "validate_is_db_running"
+        role:    "validations/validate_is_db_running"
+      - name:    "validate_db_home"
+        role:    "validations/validate_db_home"
+      - name:    "validate_grid_home"
+        role:    "validations/validate_grid_home"
+
+  # ── Gate 3: Network validation ───────────────────────────────────────────
+  # validate_grid_listener and validate_db_home_listener are mutually
+  # exclusive — only the one matching grid_configured_true runs.
+  gate_network_validation:
+    id:          "gate_network_validation"
+    name:        "Network Validation"
+    description: "Checks listener state. Sets listener_creation_required and listener_source flags."
+    prereqs:
+      - gate_environment_validation
+    validations:
+      - name:    "validate_grid_listener"
+        role:    "validations/validate_grid_listener"
+        when:    "grid_configured_true | bool"
+      - name:    "validate_db_home_listener"
+        role:    "validations/validate_db_home_listener"
+        when:    "not (grid_configured_true | bool)"

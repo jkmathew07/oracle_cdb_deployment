@@ -1,0 +1,83 @@
+---
+# =============================================================================
+# workers/worker_post_db_validation/tasks/run.yml
+# Post-deployment validation — three checks, all must pass:
+#   1. ora_pmon_<SID> process is running
+#   2. V$INSTANCE STATUS = OPEN (via sqlplus)
+#   3. SID appears in /etc/oratab
+# =============================================================================
+
+- name: "worker_post_db_validation | run"
+  block:
+
+    # ── 1. pmon ───────────────────────────────────────────────────────────────
+    - name: "worker_post_db_validation | check ora_pmon process"
+      ansible.builtin.shell: |
+        ps -ef | grep "ora_pmon_{{ oracle_sid }}$" | grep -v grep
+      register: _post_pmon
+      failed_when: false
+      changed_when: false
+      become: true
+
+    - name: "worker_post_db_validation | assert pmon is running"
+      ansible.builtin.assert:
+        that: _post_pmon.rc == 0
+        fail_msg: >-
+          ora_pmon_{{ oracle_sid }} not running after DBCA.
+          Check alert log:
+          {{ oracle_base }}/diag/rdbms/{{ oracle_sid | lower }}/{{ oracle_sid }}/trace/alert_{{ oracle_sid }}.log
+        quiet: true
+
+    # ── 2. DB OPEN ────────────────────────────────────────────────────────────
+    - name: "worker_post_db_validation | query V$INSTANCE STATUS"
+      ansible.builtin.shell: |
+        export ORACLE_SID={{ oracle_sid }}
+        export ORACLE_HOME={{ oracle_home }}
+        export PATH={{ oracle_home }}/bin:$PATH
+        echo "SELECT STATUS FROM V\$INSTANCE;" | sqlplus -S / as sysdba 2>/dev/null | grep -w "OPEN"
+      register: _post_open
+      failed_when: false
+      changed_when: false
+      become: true
+      become_user: "{{ oracle_user }}"
+
+    - name: "worker_post_db_validation | assert DB is OPEN"
+      ansible.builtin.assert:
+        that: _post_open.rc == 0
+        fail_msg: >-
+          Database {{ oracle_sid }} is not in OPEN status.
+          Check alert log:
+          {{ oracle_base }}/diag/rdbms/{{ oracle_sid | lower }}/{{ oracle_sid }}/trace/alert_{{ oracle_sid }}.log
+        quiet: true
+
+    # ── 3. oratab ─────────────────────────────────────────────────────────────
+    - name: "worker_post_db_validation | check oratab entry"
+      ansible.builtin.shell: |
+        grep -c "^{{ oracle_sid }}:" {{ oratab_file }} || true
+      register: _post_oratab
+      changed_when: false
+      become: true
+
+    - name: "worker_post_db_validation | assert oratab entry exists"
+      ansible.builtin.assert:
+        that: _post_oratab.stdout | int > 0
+        fail_msg: >-
+          SID '{{ oracle_sid }}' not found in {{ oratab_file }} after deployment.
+          DBCA may not have registered it — check DBCA logs.
+        quiet: true
+
+    - name: "worker_post_db_validation | set COMPLETED"
+      ansible.builtin.set_fact:
+        _worker_status:  "COMPLETED"
+        _worker_message: >-
+          Database {{ oracle_sid }} validated: pmon running, status OPEN,
+          oratab entry present.
+        _worker_changed: false
+
+  rescue:
+
+    - name: "worker_post_db_validation | set FAILED"
+      ansible.builtin.set_fact:
+        _worker_status:  "FAILED"
+        _worker_message: "{{ ansible_failed_result.msg | default('Post-DB validation failed') | truncate(200) }}"
+        _worker_changed: false

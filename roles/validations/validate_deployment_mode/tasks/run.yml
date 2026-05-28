@@ -1,0 +1,175 @@
+---
+# =============================================================================
+# validations/validate_deployment_mode/tasks/run.yml
+# Asserts all mandatory variables are defined and logically consistent.
+# Covers: DB identity, storage paths, memory model, PDB list, listener.
+# =============================================================================
+
+- name: "validate_deployment_mode | run"
+  block:
+
+    # ── DB Identity ───────────────────────────────────────────────────────────
+    - name: "validate_deployment_mode | assert oracle_sid"
+      ansible.builtin.assert:
+        that:
+          - oracle_sid is defined
+          - oracle_sid | length > 0
+          - oracle_sid | length <= 8
+          - oracle_sid is match('^[A-Za-z][A-Za-z0-9]*$')
+        fail_msg: >-
+          oracle_sid is missing or invalid. Must be 1-8 alphanumeric chars
+          starting with a letter. Got: '{{ oracle_sid | default("") }}'
+        quiet: true
+
+    - name: "validate_deployment_mode | assert oracle_home"
+      ansible.builtin.assert:
+        that:
+          - oracle_home is defined
+          - oracle_home is match('^/')
+        fail_msg: >-
+          oracle_home is missing or not an absolute path.
+          Got: '{{ oracle_home | default("") }}'
+        quiet: true
+
+    - name: "validate_deployment_mode | assert db_name"
+      ansible.builtin.assert:
+        that:
+          - db_name is defined
+          - db_name | length > 0
+        fail_msg: "db_name is required."
+        quiet: true
+
+    # ── Storage paths ─────────────────────────────────────────────────────────
+    - name: "validate_deployment_mode | assert db_data_file_loc"
+      ansible.builtin.assert:
+        that:
+          - db_data_file_loc is defined
+          - db_data_file_loc is match('^/')
+        fail_msg: >-
+          db_data_file_loc is required and must be an absolute path.
+          Got: '{{ db_data_file_loc | default("") }}'
+        quiet: true
+
+    - name: "validate_deployment_mode | assert db_fra"
+      ansible.builtin.assert:
+        that:
+          - db_fra is defined
+          - db_fra is match('^/')
+        fail_msg: >-
+          db_fra (Fast Recovery Area) is required and must be an absolute path.
+          Got: '{{ db_fra | default("") }}'
+        quiet: true
+
+    - name: "validate_deployment_mode | assert db_arch_loc"
+      ansible.builtin.assert:
+        that:
+          - db_arch_loc is defined
+          - db_arch_loc is match('^/')
+        fail_msg: >-
+          db_arch_loc (archivelog destination) is required and must be an
+          absolute path. Got: '{{ db_arch_loc | default("") }}'
+        quiet: true
+
+    - name: "validate_deployment_mode | assert db_redo_loc"
+      ansible.builtin.assert:
+        that:
+          - db_redo_loc is defined
+          - db_redo_loc is match('^/')
+        fail_msg: >-
+          db_redo_loc (redo log location) is required and must be an absolute
+          path. Got: '{{ db_redo_loc | default("") }}'
+        quiet: true
+
+    # ── Memory model — SGA/PGA vs AMM ────────────────────────────────────────
+    # Rule: either (sga_target_mb > 0 AND pga_target_mb > 0 AND memory_target_mb == 0)
+    #       or     (memory_target_mb > 0 AND sga_target_mb == 0 AND pga_target_mb == 0)
+    - name: "validate_deployment_mode | assert SGA and PGA are positive"
+      ansible.builtin.assert:
+        that:
+          - sga_target_mb | int > 0
+          - pga_target_mb | int > 0
+        fail_msg: >-
+          sga_target_mb ({{ sga_target_mb }}) and pga_target_mb ({{ pga_target_mb }})
+          must both be greater than 0 when memory_target_mb is 0.
+        quiet: true
+      when: memory_target_mb | int == 0
+
+    - name: "validate_deployment_mode | assert memory_target_mb is 0 when SGA/PGA set"
+      ansible.builtin.assert:
+        that:
+          - memory_target_mb | int == 0
+        fail_msg: >-
+          memory_target_mb must be 0 when sga_target_mb and pga_target_mb are
+          used. Set memory_target_mb: 0 in inventory.
+        quiet: true
+      when:
+        - sga_target_mb | int > 0
+        - pga_target_mb | int > 0
+
+    - name: "validate_deployment_mode | assert memory_target_mb > 0 when AMM mode"
+      ansible.builtin.assert:
+        that:
+          - memory_target_mb | int > 0
+        fail_msg: >-
+          At least one memory model must be configured:
+          either set sga_target_mb + pga_target_mb (and memory_target_mb=0),
+          or set memory_target_mb > 0 (and sga_target_mb=pga_target_mb=0).
+        quiet: true
+      when:
+        - sga_target_mb | int == 0
+        - pga_target_mb | int == 0
+
+    # ── PDB list ──────────────────────────────────────────────────────────────
+    - name: "validate_deployment_mode | assert pdb_names is a non-empty list"
+      ansible.builtin.assert:
+        that:
+          - pdb_names is defined
+          - pdb_names is iterable
+          - pdb_names | list | length > 0
+        fail_msg: >-
+          pdb_names must be a non-empty list of PDB names.
+          Got: '{{ pdb_names | default("undefined") }}'
+        quiet: true
+
+    - name: "validate_deployment_mode | assert each PDB name is valid"
+      ansible.builtin.assert:
+        that:
+          - item | length > 0
+          - item | length <= 30
+          - item is match('^[A-Za-z][A-Za-z0-9_$#]*$')
+        fail_msg: >-
+          PDB name '{{ item }}' is invalid. Must start with a letter, contain
+          only alphanumeric/underscore/$/#, and be max 30 chars.
+        quiet: true
+      loop: "{{ pdb_names }}"
+
+    # ── Listener ─────────────────────────────────────────────────────────────
+    - name: "validate_deployment_mode | assert listener_port"
+      ansible.builtin.assert:
+        that:
+          - listener_port is defined
+          - listener_port | int > 0
+          - listener_port | int < 65536
+        fail_msg: >-
+          listener_port must be 1-65535. Got: '{{ listener_port | default("") }}'
+        quiet: true
+
+    - name: "validate_deployment_mode | set PASSED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_deployment_mode"
+          status:  "PASSED"
+          message: >-
+            All mandatory variables valid. SID={{ oracle_sid }},
+            PDBs={{ pdb_names | join(',') }},
+            SGA={{ sga_target_mb }}MB, PGA={{ pga_target_mb }}MB,
+            storage paths verified.
+
+  rescue:
+
+    - name: "validate_deployment_mode | set FAILED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_deployment_mode"
+          status:  "FAILED"
+          message: "{{ ansible_failed_result.msg | default('Input validation failed') | truncate(200) }}"

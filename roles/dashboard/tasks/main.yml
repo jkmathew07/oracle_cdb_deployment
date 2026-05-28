@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# dashboard/tasks/main.yml  — called once by orchestrator to initialise state.
+# =============================================================================
+
+- name: "dashboard | init state"
+  ansible.builtin.set_fact:
+    _dashboard_steps:    []
+    _dashboard_wf_name:  "{{ selected_workflow_name }}"
+    _dashboard_wf_steps: "{{ selected_workflow_steps }}"
+  tags: [always]
+
+- name: "dashboard | startup banner"
+  ansible.builtin.debug:
+    msg: |
+      ╔══════════════════════════════════════════════════════════════════════╗
+         📊  ORACLE CDB DEPLOYMENT DASHBOARD
+         Workflow : {{ selected_workflow_name }} (id={{ selected_workflow_id }})
+         Steps    : {{ selected_workflow_steps | join(' → ') }}
+         SID      : {{ oracle_sid }}
+         Host     : {{ inventory_hostname }}
+      ╚══════════════════════════════════════════════════════════════════════╝
+  run_once: true
+  tags: [dashboard]

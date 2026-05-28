@@ -1,0 +1,138 @@
+---
+# =============================================================================
+# workers/worker_execute_dbca/tasks/run.yml
+#
+# Idempotency guard: skips DBCA if ora_pmon_<SID> is already running.
+# After DBCA completes: creates any additional PDBs from pdb_names[1:]
+# via sqlplus (DBCA response file only supports a single pdbName).
+# Cleanup in always: deletes the response file regardless of outcome.
+# =============================================================================
+
+- name: "worker_execute_dbca | run"
+  block:
+
+    # ── Idempotency guard ─────────────────────────────────────────────────────
+    - name: "worker_execute_dbca | check if DB already running"
+      ansible.builtin.shell: |
+        ps -ef | grep "ora_pmon_{{ oracle_sid }}$" | grep -v grep
+      register: _pmon_pre
+      failed_when: false
+      changed_when: false
+      become: true
+
+    - name: "worker_execute_dbca | SKIP if DB already running"
+      ansible.builtin.set_fact:
+        _worker_status:  "SKIPPED"
+        _worker_message: >-
+          Database {{ oracle_sid }} is already running (ora_pmon detected).
+          DBCA skipped — idempotency guard.
+        _worker_changed: false
+      when: _pmon_pre.rc == 0
+
+    # ── Run DBCA ──────────────────────────────────────────────────────────────
+    - name: "worker_execute_dbca | execute DBCA silent mode (15–30 min)"
+      ansible.builtin.command:
+        argv:
+          - "{{ oracle_home }}/bin/dbca"
+          - -silent
+          - -createDatabase
+          - -responseFile
+          - "{{ dbca_rsp_path }}"
+      register: _dbca_output
+      become: true
+      become_user: "{{ oracle_user }}"
+      async:  3600
+      poll:   30
+      when: _pmon_pre.rc != 0
+
+    - name: "worker_execute_dbca | display DBCA stdout"
+      ansible.builtin.debug:
+        msg: "{{ _dbca_output.stdout_lines | default([]) }}"
+      when:
+        - _pmon_pre.rc != 0
+        - _dbca_output.stdout_lines | default([]) | length > 0
+
+    - name: "worker_execute_dbca | assert DBCA succeeded"
+      ansible.builtin.assert:
+        that:
+          - _dbca_output.rc == 0
+          - _dbca_output.stdout | default('') is not search('ORA-|FATAL ERROR')
+        fail_msg: >-
+          DBCA exited with rc={{ _dbca_output.rc }}.
+          Stderr: {{ _dbca_output.stderr | default('') | truncate(300) }}
+          Logs: {{ oracle_base }}/cfgtoollogs/dbca/{{ oracle_sid }}/
+        quiet: true
+      when: _pmon_pre.rc != 0
+
+    # ── Create additional PDBs (pdb_names[1:]) via sqlplus ───────────────────
+    # DBCA only creates the first PDB from the response file.
+    # Any additional PDBs in pdb_names are created here idempotently.
+    - name: "worker_execute_dbca | create additional PDB: {{ _extra_pdb }}"
+      ansible.builtin.shell: |
+        export ORACLE_SID={{ oracle_sid }}
+        export ORACLE_HOME={{ oracle_home }}
+        export PATH={{ oracle_home }}/bin:$PATH
+        sqlplus -S / as sysdba << 'EOF'
+        -- Skip if PDB already exists
+        DECLARE
+          v_count NUMBER;
+        BEGIN
+          SELECT COUNT(*) INTO v_count
+          FROM   v$pdbs
+          WHERE  name = UPPER('{{ _extra_pdb }}');
+          IF v_count = 0 THEN
+            EXECUTE IMMEDIATE
+              'CREATE PLUGGABLE DATABASE {{ _extra_pdb }}
+               ADMIN USER pdbadmin IDENTIFIED BY "{{ oracle_pdb_password }}"
+               FILE_NAME_CONVERT (
+                 ''{{ db_data_file_loc }}/{{ pdb_names | first | upper }}'',
+                 ''{{ db_data_file_loc }}/{{ _extra_pdb | upper }}''
+               )';
+            EXECUTE IMMEDIATE 'ALTER PLUGGABLE DATABASE {{ _extra_pdb }} OPEN';
+            EXECUTE IMMEDIATE
+              'ALTER PLUGGABLE DATABASE {{ _extra_pdb }} SAVE STATE';
+          END IF;
+        END;
+        /
+        EXIT;
+        EOF
+      become: true
+      become_user: "{{ oracle_user }}"
+      loop:         "{{ pdb_names[1:] }}"
+      loop_control:
+        loop_var: _extra_pdb
+        label:    "{{ _extra_pdb }}"
+      when:
+        - _pmon_pre.rc != 0
+        - pdb_names | length > 1
+      register: _extra_pdb_results
+      changed_when: true
+
+    - name: "worker_execute_dbca | set COMPLETED"
+      ansible.builtin.set_fact:
+        _worker_status: "COMPLETED"
+        _worker_message: >-
+          DBCA completed. Database {{ oracle_sid }} created.
+          PDBs: {{ pdb_names | join(', ') }}.
+        _worker_changed: true
+      when: _pmon_pre.rc != 0
+
+  rescue:
+
+    - name: "worker_execute_dbca | set FAILED"
+      ansible.builtin.set_fact:
+        _worker_status:  "FAILED"
+        _worker_message: >-
+          DBCA/PDB creation failed:
+          {{ ansible_failed_result.msg | default('unknown error') | truncate(200) }}
+          Logs: {{ oracle_base }}/cfgtoollogs/dbca/{{ oracle_sid }}/
+        _worker_changed: false
+
+  always:
+
+    - name: "worker_execute_dbca | ALWAYS — delete response file (contains passwords)"
+      ansible.builtin.file:
+        path:  "{{ dbca_rsp_path }}"
+        state: absent
+      become: true
+      ignore_errors: true

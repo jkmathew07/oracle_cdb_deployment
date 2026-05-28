@@ -1,0 +1,108 @@
+---
+# =============================================================================
+# generic_gate/tasks/main.yml
+# Single reusable gate role. Receives current_gate_name, looks up the gate
+# config from gate_configs dict (no include_vars path hack), enforces prereqs,
+# loops validations, collects failures, halts on any FAILED result.
+#
+# CONTRACT — sets:
+#   _current_step_result  (read by gate_engine/dispatch_step.yml)
+#   _<gate_id>_passed     (read by prereq assertions in later gates)
+# =============================================================================
+
+# ── Resolve config from group_vars dict ───────────────────────────────────────
+- name: "generic_gate | resolve config for: {{ current_gate_name }}"
+  ansible.builtin.set_fact:
+    _gate_cfg:        "{{ gate_configs[current_gate_name] }}"
+    _gate_started_at: "{{ ansible_date_time.iso8601 }}"
+    _gate_failures:   []
+    _gate_warnings:   []
+  tags: [always]
+
+- name: "generic_gate | assert gate config exists"
+  ansible.builtin.assert:
+    that: _gate_cfg is defined and _gate_cfg.name is defined
+    fail_msg: >-
+      No gate config found for "{{ current_gate_name }}" in gate_configs.
+      Add an entry to group_vars/all/gate_configs.yml.
+    quiet: true
+
+- name: "generic_gate | display start: {{ _gate_cfg.name }}"
+  ansible.builtin.debug:
+    msg: "[ GATE ] {{ _gate_cfg.name }} — starting ({{ _gate_cfg.validations | length }} validations)"
+
+- name: "generic_gate | log gate start"
+  ansible.builtin.lineinfile:
+    path:   "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      {{ _gate_cfg.id }} | INFO | gate_start | {{ _gate_cfg.name }}
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true
+
+# ── Prereq enforcement ───────────────────────────────────────────────────────
+# Each prereq must have set _<prereq_id>_passed = true in a prior gate.
+- name: "generic_gate | assert prereq passed: {{ _prereq }}"
+  ansible.builtin.assert:
+    that: "vars['_' + _prereq + '_passed'] | default(false) | bool"
+    fail_msg: >-
+      Gate "{{ _gate_cfg.name }}" requires "{{ _prereq }}" to have passed first.
+      Check workflow_map step order.
+    quiet: true
+  loop:         "{{ _gate_cfg.prereqs | default([]) }}"
+  loop_control:
+    loop_var: _prereq
+  when: _gate_cfg.prereqs | default([]) | length > 0
+
+# ── Run validations ───────────────────────────────────────────────────────────
+- name: "generic_gate | run validation: {{ _val_item.name }}"
+  ansible.builtin.include_tasks: execute_validation.yml
+  loop:         "{{ _gate_cfg.validations }}"
+  loop_control:
+    loop_var: _val_item
+    label:    "{{ _val_item.name }}"
+
+# ── Mark gate passed (used by later prereq checks) ────────────────────────────
+- name: "generic_gate | set _{{ _gate_cfg.id }}_passed"
+  ansible.builtin.set_fact:
+    "{{ '_' + _gate_cfg.id + '_passed' }}": true
+  when: _gate_failures | length == 0
+
+# ── Set _current_step_result ──────────────────────────────────────────────────
+- name: "generic_gate | set _current_step_result"
+  ansible.builtin.set_fact:
+    _current_step_result:
+      step_name:    "{{ _gate_cfg.id }}"
+      step_display: "{{ _gate_cfg.name }}"
+      step_type:    "gate"
+      status:       "{{ 'PASSED' if _gate_failures | length == 0 else 'FAILED' }}"
+      warnings:     "{{ _gate_warnings }}"
+      started_at:   "{{ _gate_started_at }}"
+      finished_at:  "{{ ansible_date_time.iso8601 }}"
+
+- name: "generic_gate | display result: {{ _gate_cfg.name }}"
+  ansible.builtin.debug:
+    msg: |
+      [ GATE ] {{ _gate_cfg.name }}: {{ _current_step_result.status }}
+      {% if _gate_warnings | length > 0 %}
+      Warnings:
+      {% for w in _gate_warnings %}
+        ⚠  {{ w }}
+      {% endfor %}
+      {% endif %}
+
+# ── Fail on any FAILED validation ────────────────────────────────────────────
+- name: "generic_gate | fail on validation failures"
+  ansible.builtin.fail:
+    msg: |
+      GATE FAILED: {{ _gate_cfg.name }}
+      Host: {{ inventory_hostname }}
+      ─────────────────────────────────────────────
+      Failed validations:
+      {% for f in _gate_failures %}
+        ✗  {{ f.name }}: {{ f.message }}
+      {% endfor %}
+      Log: {{ log_file }}
+  when: _gate_failures | length > 0

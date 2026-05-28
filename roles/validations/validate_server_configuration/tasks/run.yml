@@ -1,0 +1,113 @@
+---
+# =============================================================================
+# validations/validate_server_configuration/tasks/run.yml
+# Validates server resources:
+#   1. Total RAM >= min_memory_mb
+#   2. HugePages check (when check_hugepages=true):
+#        - Read /proc/meminfo for HugePages_Free and Hugepagesize
+#        - Calculate free hugepage memory in MB
+#        - Assert free hugepage memory >= sga_target_mb
+#        HugePages absent entirely is a WARNING (not FAILED) — many labs
+#        run without hugepages. Only fail when hugepages ARE configured
+#        but free capacity is insufficient for the requested SGA.
+# =============================================================================
+
+- name: "validate_server_configuration | run"
+  block:
+
+    # ── 1. Total RAM ─────────────────────────────────────────────────────────
+    - name: "validate_server_configuration | assert minimum total memory"
+      ansible.builtin.assert:
+        that:
+          - ansible_memtotal_mb | int >= min_memory_mb | int
+        fail_msg: >-
+          Insufficient RAM. Found {{ ansible_memtotal_mb }}MB,
+          minimum required {{ min_memory_mb }}MB.
+        quiet: true
+
+    # ── 2. HugePages ─────────────────────────────────────────────────────────
+    - name: "validate_server_configuration | read /proc/meminfo for hugepages"
+      ansible.builtin.shell: |
+        awk '/HugePages_Free/ {free=$2}
+             /HugePages_Total/ {total=$2}
+             /Hugepagesize/    {size=$2}
+             END { print free, total, size }' /proc/meminfo
+      register: _hugepage_raw
+      changed_when: false
+      become: true
+      when: check_hugepages | bool
+
+    # Parse: "free total size_kB"
+    - name: "validate_server_configuration | parse hugepage values"
+      ansible.builtin.set_fact:
+        _hp_free:     "{{ _hugepage_raw.stdout.split()[0] | int }}"
+        _hp_total:    "{{ _hugepage_raw.stdout.split()[1] | int }}"
+        _hp_size_kb:  "{{ _hugepage_raw.stdout.split()[2] | int }}"
+      when:
+        - check_hugepages | bool
+        - _hugepage_raw.stdout is defined
+        - _hugepage_raw.stdout.split() | length == 3
+
+    # Free hugepage memory in MB  =  free_pages * page_size_kB / 1024
+    - name: "validate_server_configuration | calculate free hugepage memory (MB)"
+      ansible.builtin.set_fact:
+        _hp_free_mb: "{{ (_hp_free | int * _hp_size_kb | int / 1024) | int }}"
+      when:
+        - check_hugepages | bool
+        - _hp_total is defined
+
+    # HugePages not configured at all — WARNING, not FAILED
+    - name: "validate_server_configuration | warn if HugePages not configured"
+      ansible.builtin.debug:
+        msg: >-
+          ⚠  WARNING: HugePages are not configured on this host.
+          For production Oracle databases configure HugePages in /etc/sysctl.conf
+          to lock SGA into contiguous memory pages and prevent swapping.
+      when:
+        - check_hugepages | bool
+        - _hp_total is defined
+        - _hp_total | int == 0
+
+    # HugePages configured but insufficient for SGA
+    - name: "validate_server_configuration | assert free hugepages can accommodate SGA"
+      ansible.builtin.assert:
+        that:
+          - _hp_free_mb | int >= sga_target_mb | int
+        fail_msg: >-
+          Insufficient free HugePages for the requested SGA.
+          SGA requested : {{ sga_target_mb }}MB
+          Free HugePages: {{ _hp_free_mb }}MB
+            ({{ _hp_free }} free pages × {{ _hp_size_kb }}kB page size)
+          Total HugePages: {{ _hp_total }} pages
+          Either reduce sga_target_mb, free other consumers of HugePages,
+          or increase vm.nr_hugepages in /etc/sysctl.conf.
+        quiet: true
+      when:
+        - check_hugepages | bool
+        - _hp_total is defined
+        - _hp_total | int > 0
+        - _hp_free_mb is defined
+
+    - name: "validate_server_configuration | set PASSED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_server_configuration"
+          status:  "PASSED"
+          message: >-
+            Server resources OK.
+            RAM: {{ ansible_memtotal_mb }}MB (min: {{ min_memory_mb }}MB).
+            {% if check_hugepages | bool and _hp_total is defined and _hp_total | int > 0 %}
+            HugePages: {{ _hp_free }}/{{ _hp_total }} free
+            ({{ _hp_free_mb }}MB free, SGA needs {{ sga_target_mb }}MB).
+            {% elif check_hugepages | bool and _hp_total is defined and _hp_total | int == 0 %}
+            HugePages: not configured (WARNING).
+            {% endif %}
+
+  rescue:
+
+    - name: "validate_server_configuration | set FAILED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_server_configuration"
+          status:  "FAILED"
+          message: "{{ ansible_failed_result.msg | default('Server configuration check failed') | truncate(200) }}"

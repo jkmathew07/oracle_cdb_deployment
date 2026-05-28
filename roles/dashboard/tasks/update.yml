@@ -1,0 +1,35 @@
+---
+# =============================================================================
+# dashboard/tasks/update.yml  — appends _current_step_result and renders table.
+# =============================================================================
+
+- name: "dashboard | append step result"
+  ansible.builtin.set_fact:
+    _dashboard_steps: >-
+      {{ (_dashboard_steps | default([]))
+         + [_current_step_result | default({})
+            | combine({'step_number': (_dashboard_steps | default([])) | length + 1})] }}
+  tags: [always]
+
+- name: "dashboard | render progress table"
+  ansible.builtin.debug:
+    msg: |
+      ── Deployment Progress — {{ _dashboard_wf_name }} ──────────────────
+      Host: {{ inventory_hostname }}
+      ──────────────────────────────────────────────────────────────────────
+      {% for s in _dashboard_steps | default([]) %}
+      {% set icon = '✅' if s.status in ['PASSED','COMPLETED']
+                    else ('⏭️ ' if s.status == 'SKIPPED'
+                    else ('⚠️ ' if s.status == 'WARNING'
+                    else '❌')) %}
+      {{ "%2d" | format(s.step_number | int) }}. {{ icon }} {{ s.step_display | default(s.step_name) | ljust(38) }} [{{ s.status }}]
+      {% endfor %}
+      ──────────────────────────────────────────────────────────────────────
+      Progress: {{ _dashboard_steps | length }}/{{ _dashboard_wf_steps | length }} steps
+      {% if _dashboard_steps | length < _dashboard_wf_steps | length %}
+      Next    : {{ _dashboard_wf_steps[_dashboard_steps | length] }}
+      {% else %}
+      🏁 All steps complete.
+      {% endif %}
+      ──────────────────────────────────────────────────────────────────────
+  tags: [dashboard]

@@ -1,0 +1,11 @@
+---
+# dashboard/tasks/update_validation.yml — called after each validation role.
+
+- name: "dashboard | validation status: {{ _val_status.name | default('unknown') }}"
+  ansible.builtin.debug:
+    msg: >-
+      {{ '✅' if _val_status.status in ['PASSED','SKIPPED']
+         else ('⚠️ ' if _val_status.status == 'WARNING' else '❌') }}
+      [VALIDATION] {{ _val_status.name | default('') }}:
+      {{ _val_status.status }} — {{ _val_status.message | default('') | truncate(100) }}
+  tags: [dashboard]

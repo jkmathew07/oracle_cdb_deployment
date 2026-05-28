@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# phases/phase_db_creation/vars/main.yml
+# Declares the ordered list of workers for this phase.
+# Adding a new step = add an entry here. No engine changes needed.
+# =============================================================================
+
+phase:
+  id:          "phase_db_creation"
+  name:        "DB Creation"
+  description: "Configures listener (if needed), generates DBCA response file, runs DBCA, validates result."
+
+  workers:
+    - name: "Configure Listener"
+      role: "workers/worker_configure_listener"
+
+    - name: "Generate DBCA Response File"
+      role: "workers/worker_generate_dbca_rsp"
+
+    - name: "Execute Silent DBCA"
+      role: "workers/worker_execute_dbca"
+
+    - name: "Post-DB Validation"
+      role: "workers/worker_post_db_validation"

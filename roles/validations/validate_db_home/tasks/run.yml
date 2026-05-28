@@ -1,0 +1,72 @@
+---
+# =============================================================================
+# validations/validate_db_home/tasks/run.yml
+# Verifies oracle_home exists and contains sqlplus and dbca binaries.
+# =============================================================================
+
+- name: "validate_db_home | run"
+  block:
+
+    - name: "validate_db_home | stat ORACLE_HOME directory"
+      ansible.builtin.stat:
+        path: "{{ oracle_home }}"
+      register: _oh_stat
+      become: true
+
+    - name: "validate_db_home | assert ORACLE_HOME directory exists"
+      ansible.builtin.assert:
+        that:
+          - _oh_stat.stat.exists
+          - _oh_stat.stat.isdir
+        fail_msg: >-
+          oracle_home directory does not exist: {{ oracle_home }}.
+          Verify the Oracle RDBMS software is installed.
+        quiet: true
+
+    - name: "validate_db_home | stat sqlplus binary"
+      ansible.builtin.stat:
+        path: "{{ oracle_home }}/bin/sqlplus"
+      register: _sqlplus_stat
+      become: true
+
+    - name: "validate_db_home | assert sqlplus is executable"
+      ansible.builtin.assert:
+        that:
+          - _sqlplus_stat.stat.exists
+          - _sqlplus_stat.stat.executable
+        fail_msg: >-
+          sqlplus not found at {{ oracle_home }}/bin/sqlplus.
+          Oracle RDBMS software may not be fully installed.
+        quiet: true
+
+    - name: "validate_db_home | stat dbca binary"
+      ansible.builtin.stat:
+        path: "{{ oracle_home }}/bin/dbca"
+      register: _dbca_stat
+      become: true
+
+    - name: "validate_db_home | assert dbca is executable"
+      ansible.builtin.assert:
+        that:
+          - _dbca_stat.stat.exists
+          - _dbca_stat.stat.executable
+        fail_msg: >-
+          dbca not found at {{ oracle_home }}/bin/dbca.
+          Cannot create a database without DBCA.
+        quiet: true
+
+    - name: "validate_db_home | set PASSED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_db_home"
+          status:  "PASSED"
+          message: "ORACLE_HOME {{ oracle_home }} verified (sqlplus + dbca present)."
+
+  rescue:
+
+    - name: "validate_db_home | set FAILED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_db_home"
+          status:  "FAILED"
+          message: "{{ ansible_failed_result.msg | default('Oracle home validation failed') | truncate(200) }}"

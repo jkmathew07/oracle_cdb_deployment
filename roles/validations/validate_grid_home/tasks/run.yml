@@ -1,0 +1,47 @@
+---
+# =============================================================================
+# validations/validate_grid_home/tasks/run.yml
+# Auto-detects Grid Infrastructure using grid_home_base variable (not a
+# hardcoded path). Sets grid_configured_true and grid_home as play-scoped
+# facts consumed by gate_network_validation and worker_configure_listener.
+# Always PASSED — Grid absence is a valid state (standalone deployment).
+# =============================================================================
+
+- name: "validate_grid_home | run"
+  block:
+
+    - name: "validate_grid_home | stat crsctl at {{ grid_home_base }}/bin/crsctl"
+      ansible.builtin.stat:
+        path: "{{ grid_home_base }}/bin/crsctl"
+      register: _crsctl_stat
+      become: true
+
+    - name: "validate_grid_home | set grid_configured_true = true"
+      ansible.builtin.set_fact:
+        grid_configured_true: true
+        grid_home:            "{{ grid_home_base }}"
+      when: _crsctl_stat.stat.exists and _crsctl_stat.stat.executable
+
+    - name: "validate_grid_home | set grid_configured_true = false"
+      ansible.builtin.set_fact:
+        grid_configured_true: false
+      when: not (_crsctl_stat.stat.exists and _crsctl_stat.stat.executable)
+
+    - name: "validate_grid_home | set PASSED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_grid_home"
+          status:  "PASSED"
+          message: >-
+            {{ 'Grid Infrastructure detected at ' + grid_home_base + '.'
+               if grid_configured_true
+               else 'Grid Infrastructure not found — standalone deployment.' }}
+
+  rescue:
+
+    - name: "validate_grid_home | set FAILED"
+      ansible.builtin.set_fact:
+        _val_status:
+          name:    "validate_grid_home"
+          status:  "FAILED"
+          message: "{{ ansible_failed_result.msg | default('Grid home detection failed') | truncate(200) }}"

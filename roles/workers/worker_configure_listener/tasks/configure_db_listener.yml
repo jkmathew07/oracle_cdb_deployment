@@ -1,0 +1,36 @@
+---
+# workers/worker_configure_listener/tasks/configure_db_listener.yml
+# Idempotent standalone listener setup.
+# Uses blockinfile so re-runs do not duplicate entries.
+
+- name: "configure_db_listener | ensure network/admin directory"
+  ansible.builtin.file:
+    path:  "{{ oracle_home }}/network/admin"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode:  '0755'
+  become: true
+
+- name: "configure_db_listener | render listener.ora"
+  ansible.builtin.template:
+    src:    "listener.ora.j2"
+    dest:   "{{ oracle_home }}/network/admin/listener.ora"
+    owner:  "{{ oracle_user }}"
+    group:  "{{ oracle_group }}"
+    mode:   '0644'
+    backup: true
+  become: true
+
+- name: "configure_db_listener | check if listener process already running"
+  ansible.builtin.shell: |
+    ps -ef | grep "[t]nslsnr" | grep -i "{{ listener_name }}" || true
+  register: _lsnr_running
+  changed_when: false
+  become: true
+
+- name: "configure_db_listener | start listener (only if not already running)"
+  ansible.builtin.command: "{{ oracle_home }}/bin/lsnrctl start {{ listener_name }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  when: _lsnr_running.stdout | length == 0

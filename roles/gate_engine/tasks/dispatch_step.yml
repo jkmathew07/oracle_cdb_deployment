@@ -1,0 +1,53 @@
+---
+# =============================================================================
+# gate_engine/tasks/dispatch_step.yml
+# Called once per step in the workflow step loop.
+# Routes gate_* to generic_gate, phase_* to phase_engine.
+# Updates dashboard after every step.
+# =============================================================================
+
+- name: "dispatch | log step start: {{ _step }}"
+  ansible.builtin.lineinfile:
+    path: "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      gate_engine | INFO | step_start |
+      [{{ _step_idx + 1 }}/{{ selected_workflow_steps | length }}] {{ _step }}
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true
+
+# ── Gate steps ────────────────────────────────────────────────────────────────
+- name: "dispatch | run GATE: {{ _step }}"
+  ansible.builtin.include_role:
+    name: generic_gate
+  vars:
+    current_gate_name: "{{ _step }}"
+  when: _step is match('^gate_')
+
+# ── Phase steps ───────────────────────────────────────────────────────────────
+- name: "dispatch | run PHASE (via phase_engine): {{ _step }}"
+  ansible.builtin.include_role:
+    name: phase_engine
+  vars:
+    current_phase: "{{ _step }}"
+  when: _step is match('^phase_')
+
+# ── Dashboard update ─────────────────────────────────────────────────────────
+- name: "dispatch | update dashboard after: {{ _step }}"
+  ansible.builtin.include_role:
+    name: dashboard
+    tasks_from: update.yml
+
+- name: "dispatch | log step complete: {{ _step }}"
+  ansible.builtin.lineinfile:
+    path: "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      gate_engine | INFO | step_complete |
+      {{ _step }}: {{ _current_step_result.status | default('UNKNOWN') }}
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true

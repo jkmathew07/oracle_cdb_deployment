@@ -1,0 +1,68 @@
+---
+# =============================================================================
+# validations/validate_server_configuration/tasks/main.yml
+# VALIDATION TEMPLATE — identical structure across all validation roles.
+#
+# Pattern:  Initialize → Invoke (run.yml) → Update Dashboard
+#
+# CONTRACT — run.yml must set these facts before returning:
+#   _val_status  : "PASSED" | "FAILED" | "SKIPPED"
+#   _val_message : human-readable outcome
+# =============================================================================
+
+# ── 1. INITIALIZE ─────────────────────────────────────────────────────────────
+- name: "validate server configuration | INITIALIZE"
+  ansible.builtin.set_fact:
+    _val_status:     "RUNNING"
+    _val_message:    ""
+    _val_started_at: "{{ ansible_date_time.iso8601 }}"
+  tags: [validation, always]
+
+- name: "validate server configuration | log start"
+  ansible.builtin.lineinfile:
+    path:   "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      validate_server_configuration | INFO | validation_start | Validate Server Resources
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true
+  tags: [validation, logging]
+
+- name: "validate server configuration | display start"
+  ansible.builtin.debug:
+    msg: "[ VALIDATION ] Validate Server Resources — starting"
+  tags: [validation]
+
+# ── 2. INVOKE ─────────────────────────────────────────────────────────────────
+- name: "validate server configuration | INVOKE run.yml"
+  ansible.builtin.include_tasks: run.yml
+  tags: [validation]
+
+# ── 3. UPDATE DASHBOARD ───────────────────────────────────────────────────────
+- name: "validate server configuration | UPDATE DASHBOARD"
+  ansible.builtin.include_role:
+    name: dashboard
+    tasks_from: update_validation.yml
+  tags: [validation, dashboard]
+
+- name: "validate server configuration | log result"
+  ansible.builtin.lineinfile:
+    path: "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      validate_server_configuration |
+      {{ 'INFO' if _val_status in ['PASSED','SKIPPED'] else 'ERROR' }} |
+      validation_result | Validate Server Resources: {{ _val_status }} — {{ _val_message | truncate(150) }}
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true
+  tags: [validation, logging]
+
+- name: "validate server configuration | display result"
+  ansible.builtin.debug:
+    msg: "[ VALIDATION ] Validate Server Resources: {{ _val_status }} — {{ _val_message }}"
+  tags: [validation]
+

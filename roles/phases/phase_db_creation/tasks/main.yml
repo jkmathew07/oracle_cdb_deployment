@@ -1,0 +1,78 @@
+---
+# =============================================================================
+# phases/phase_db_creation/tasks/main.yml
+# PHASE TEMPLATE — identical structure across all phase roles.
+# Pattern: Initialize → loop workers via run_worker.yml → set result → report.
+# =============================================================================
+
+- name: "phase | init: {{ phase.name }}"
+  ansible.builtin.set_fact:
+    _phase_started_at: "{{ ansible_date_time.iso8601 }}"
+    _phase_failures:   []
+  tags: [always]
+
+- name: "phase | display start: {{ phase.name }}"
+  ansible.builtin.debug:
+    msg: "[ PHASE ] {{ phase.name }} — starting ({{ phase.workers | length }} workers)"
+
+- name: "phase | log start"
+  ansible.builtin.lineinfile:
+    path:   "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      {{ phase.id }} | INFO | phase_start | {{ phase.name }}
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true
+
+# ── Run workers ───────────────────────────────────────────────────────────────
+- name: "phase | run worker: {{ _worker_item.name }}"
+  ansible.builtin.include_tasks: run_worker.yml
+  loop:         "{{ phase.workers }}"
+  loop_control:
+    loop_var: _worker_item
+    label:    "{{ _worker_item.name }}"
+
+# ── Set _current_step_result ──────────────────────────────────────────────────
+- name: "phase | set _current_step_result"
+  ansible.builtin.set_fact:
+    _current_step_result:
+      step_name:    "{{ phase.id }}"
+      step_display: "{{ phase.name }}"
+      step_type:    "phase"
+      status:       "{{ 'COMPLETED' if _phase_failures | length == 0 else 'FAILED' }}"
+      failures:     "{{ _phase_failures }}"
+      started_at:   "{{ _phase_started_at }}"
+      finished_at:  "{{ ansible_date_time.iso8601 }}"
+  tags: [always]
+
+- name: "phase | display result: {{ phase.name }}"
+  ansible.builtin.debug:
+    msg: "[ PHASE ] {{ phase.name }}: {{ _current_step_result.status }}"
+
+- name: "phase | log result"
+  ansible.builtin.lineinfile:
+    path: "{{ log_file }}"
+    line: >-
+      {{ ansible_date_time.iso8601 }} | {{ inventory_hostname }} |
+      {{ phase.id }} |
+      {{ 'INFO' if _phase_failures | length == 0 else 'ERROR' }} |
+      phase_result | {{ phase.name }}: {{ _current_step_result.status }}
+    create: true
+    mode:   '0640'
+  become: true
+  ignore_errors: true
+
+- name: "phase | fail on worker failures"
+  ansible.builtin.fail:
+    msg: |
+      PHASE FAILED: {{ phase.name }}
+      Host: {{ inventory_hostname }}
+      ─────────────────────────────────────────────
+      Failed workers:
+      {% for f in _phase_failures %}
+        ✗  {{ f }}
+      {% endfor %}
+      Log: {{ log_file }}
+  when: _phase_failures | length > 0

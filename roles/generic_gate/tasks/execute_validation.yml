@@ -1,0 +1,58 @@
+---
+# =============================================================================
+# generic_gate/tasks/execute_validation.yml
+# Dispatches one validation role (include_tasks so _val_status is read
+# immediately after return, not at end of loop).
+# Supports:
+#   _val_item.when  — Jinja2 condition string evaluated at runtime
+#   _val_item.role  — full role path under roles/
+#   _val_item.name  — display name
+# =============================================================================
+
+# ── Evaluate the when condition safely ───────────────────────────────────────
+- name: "execute_validation | evaluate when condition: {{ _val_item.name }}"
+  ansible.builtin.set_fact:
+    _val_should_run: >-
+      {{ _val_item.when | default('true') | trim == 'true'
+         or lookup('vars', _val_item.when | default('true'), default='true') | bool }}
+  ignore_errors: true
+
+- name: "execute_validation | set _val_should_run from expression"
+  ansible.builtin.set_fact:
+    _val_should_run: "{{ _val_item.when | default(true) }}"
+  when: _val_should_run is not defined
+
+# ── Run the validation role ───────────────────────────────────────────────────
+- name: "execute_validation | run: {{ _val_item.name }}"
+  ansible.builtin.include_role:
+    name: "{{ _val_item.role }}"
+  when: _val_should_run | bool
+
+# ── Mark as SKIPPED when condition was false ─────────────────────────────────
+- name: "execute_validation | mark SKIPPED: {{ _val_item.name }}"
+  ansible.builtin.set_fact:
+    _val_status:
+      name:    "{{ _val_item.name }}"
+      status:  "SKIPPED"
+      message: "Condition false — validation not required for this deployment mode."
+  when: not (_val_should_run | bool)
+
+# ── Collect FAILED results ────────────────────────────────────────────────────
+- name: "execute_validation | collect FAILED: {{ _val_item.name }}"
+  ansible.builtin.set_fact:
+    _gate_failures: >-
+      {{ _gate_failures + [{'name': _val_item.name, 'message': _val_status.message}] }}
+  when: _val_status.status == 'FAILED'
+
+# ── Collect WARNING results ───────────────────────────────────────────────────
+- name: "execute_validation | collect WARNING: {{ _val_item.name }}"
+  ansible.builtin.set_fact:
+    _gate_warnings: >-
+      {{ _gate_warnings + [_val_item.name + ': ' + _val_status.message] }}
+  when: _val_status.status == 'WARNING'
+
+# ── Dashboard update for this individual validation ───────────────────────────
+- name: "execute_validation | update dashboard: {{ _val_item.name }}"
+  ansible.builtin.include_role:
+    name: dashboard
+    tasks_from: update_validation.yml

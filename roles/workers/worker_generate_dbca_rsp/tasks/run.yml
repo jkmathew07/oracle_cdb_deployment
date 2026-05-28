@@ -1,0 +1,42 @@
+---
+# =============================================================================
+# workers/worker_generate_dbca_rsp/tasks/run.yml
+# Renders the DBCA response file to a secure location under oracle_base.
+# The file is mode 0600, oracle-owned, and deleted by worker_execute_dbca
+# in its always: block after DBCA completes or fails.
+# =============================================================================
+
+- name: "worker_generate_dbca_rsp | run"
+  block:
+
+    - name: "worker_generate_dbca_rsp | ensure staging directory"
+      ansible.builtin.file:
+        path:  "{{ dbca_rsp_dir }}"
+        state: directory
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        mode:  '0700'
+      become: true
+
+    - name: "worker_generate_dbca_rsp | render DBCA response file"
+      ansible.builtin.template:
+        src:   "dbca.rsp.j2"
+        dest:  "{{ dbca_rsp_path }}"
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        mode:  '0600'
+      become: true
+
+    - name: "worker_generate_dbca_rsp | set COMPLETED"
+      ansible.builtin.set_fact:
+        _worker_status:  "COMPLETED"
+        _worker_message: "DBCA response file written to {{ dbca_rsp_path }} (mode 0600)."
+        _worker_changed: true
+
+  rescue:
+
+    - name: "worker_generate_dbca_rsp | set FAILED"
+      ansible.builtin.set_fact:
+        _worker_status:  "FAILED"
+        _worker_message: "{{ ansible_failed_result.msg | default('Response file generation failed') | truncate(200) }}"
+        _worker_changed: false

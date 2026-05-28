@@ -1,0 +1,67 @@
+---
+# =============================================================================
+# group_vars/all/common.yml
+# Project-wide defaults and runtime flag initialisations.
+#
+# DB-specific vars (oracle_sid, db_name, storage paths, sga/pga, pdb_names,
+# listener_port) are defined per-host in inventory/hosts.yml so that
+# multiple databases can be deployed to multiple servers in a single run.
+#
+# Values here are overridden by host_vars or -e at run time.
+# =============================================================================
+
+# ── Oracle OS identity (same across all hosts in most estates) ────────────────
+oracle_base:  "/u01/app/oracle"
+oracle_user:  "oracle"
+oracle_group: "oinstall"
+oratab_file:  "/etc/oratab"
+oracle_domain: "{{ ansible_domain | default('localdomain') }}"
+
+# ── Storage defaults (overridden per-host in inventory) ───────────────────────
+# These are fallbacks only — always set explicit paths per host.
+db_data_file_loc: "/u02/oradata"
+db_fra:           "/u03/fast_recovery_area"
+db_arch_loc:      "/u04/archivelog"
+db_redo_loc:      "/u05/redo"
+db_fra_size_mb:   10240            # FRA size in MB (default 10 GB)
+
+# ── Memory — SGA + PGA (overridden per-host) ──────────────────────────────────
+# memory_target_mb MUST be 0 when sga_target_mb + pga_target_mb are used.
+# DBCA uses MEMORY_TARGET only when sga_target_mb is 0.
+sga_target_mb:    2048
+pga_target_mb:    1024
+memory_target_mb: 0                # 0 = use SGA/PGA instead of AMM
+
+# ── Minimum server resources ──────────────────────────────────────────────────
+min_memory_mb:          4096
+# Hugepage check: if hugepages are configured, verify free hugepages * hugepage
+# size can accommodate sga_target_mb. Set to false to skip the check.
+check_hugepages:        true
+
+# ── PDB list default (override per-host) ─────────────────────────────────────
+# Accepts one or more PDB names. DBCA creates all listed PDBs.
+pdb_names:
+  - "{{ oracle_sid | default('ORCL') }}PDB1"
+
+# ── Listener (overridden per-host) ────────────────────────────────────────────
+listener_name: "LISTENER"
+listener_port: 1521
+
+# ── DB character set default ─────────────────────────────────────────────────
+character_set: "AL32UTF8"
+
+# ── Grid detection runtime flags (set by validate_grid_home) ─────────────────
+grid_home_base:       "/u01/app/19.0.0/grid"
+grid_configured_true: false
+
+# ── Listener runtime flags (set by validate_*_listener gates) ────────────────
+listener_creation_required: false
+listener_source:            ""
+
+# ── DBCA response file (derived — do not override) ───────────────────────────
+dbca_rsp_dir:  "{{ oracle_base }}/dbca_staging"
+dbca_rsp_path: "{{ dbca_rsp_dir }}/{{ oracle_sid }}_dbca.rsp"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+log_dir:  "/var/log/ansible/oracle_cdb_deployment"
+log_file: "{{ log_dir }}/{{ oracle_sid | default('UNKNOWN') }}_{{ ansible_date_time.date }}.log"
